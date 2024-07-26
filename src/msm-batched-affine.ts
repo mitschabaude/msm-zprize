@@ -11,7 +11,12 @@ import { GlvScalar } from "./scalar-glv.js";
 import { broadcastFromMain } from "./threads/global-pool.js";
 import { THREADS, barrier, isMain, range, thread } from "./threads/threads.js";
 import { log2 } from "./util.js";
-import { Chunk, createLog, splitBuckets, windowSize } from "./msm-common.js";
+import {
+  Chunk,
+  createLog,
+  splitBuckets,
+  windowSizeAffine,
+} from "./msm-common.js";
 
 export { createMsm, MsmInputCurve };
 
@@ -85,7 +90,7 @@ function createMsm({
     using _s = Scalar.global.atCurrentOffset;
     let n = log2(N);
     // pick window size if it was not passed in
-    c ??= windowSize(Field, n);
+    c ??= windowSizeAffine(Field, n);
 
     let K = Math.ceil((b + 1) / c); // number of partitions
     let L = 2 ** (c - 1); // number of buckets per partition, -1 (we'll skip the 0 bucket, but will have them in the array at index 0 to simplify access)

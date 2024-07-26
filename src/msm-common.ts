@@ -1,7 +1,7 @@
 import { assert } from "./util.js";
 import type { MemorySection } from "./wasm/memory-helpers.js";
 
-export { windowSize, splitBuckets, Chunk, createLog };
+export { windowSize, windowSizeAffine, splitBuckets, Chunk, createLog };
 
 const REMOVE_ALL_LOGS = false;
 
@@ -9,6 +9,14 @@ function windowSize(Field: { sizeInBits: number }, n: number) {
   return (
     windowSizeTable[Field.sizeInBits > 260 ? "large" : "small"][n] ??
     Math.max(n - 1, 1)
+  );
+}
+
+function windowSizeAffine(Field: { sizeInBits: number }, n: number) {
+  return (
+    windowSizeTable[Field.sizeInBits > 260 ? "large-affine" : "small-affine"][
+      n
+    ] ?? Math.max(n - 1, 1)
   );
 }
 
@@ -23,9 +31,14 @@ function windowSize(Field: { sizeInBits: number }, n: number) {
  * @param c window size
  */
 const windowSizeTable: {
-  [k in "large" | "small"]: Record<number, number | undefined>;
+  [k in "large" | "large-affine" | "small" | "small-affine"]: Record<
+    number,
+    number | undefined
+  >;
 } = {
-  large: {
+  // TODO
+  large: {},
+  "large-affine": {
     14: 13,
     15: 14,
     16: 14,
@@ -36,6 +49,9 @@ const windowSizeTable: {
   },
   // TODO
   small: {
+    16: 14,
+  },
+  "small-affine": {
     16: 12,
   },
 };
