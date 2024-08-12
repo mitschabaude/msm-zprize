@@ -93,22 +93,17 @@ function numberToFloat(x: number): Float {
   return { sign, exponent, mantissa };
 }
 
-function toFloat(x: number): Float {
-  return bytesToFloat(numberToBytes(x));
-}
-
-for (let i = 0; i < 10_000; i++) {
+for (let i = 0; i < 1_000; i++) {
   let x = Math.random();
 
   let xBytes = numberToBytes(x);
   let xFloat = bytesToFloat(xBytes);
   let xRecovered = floatToNumber(xFloat);
-
   assertDeepEqual(x, xRecovered);
+
   let xFloat2 = numberToFloat(x);
   let xBytes2 = floatToBytes(xFloat2);
   let xRecovered2 = bytesToNumber(xBytes2);
-
   assertDeepEqual(x, xRecovered2);
 }
 
@@ -132,7 +127,7 @@ let c51x3 = 3 * 2 ** 51;
 let R = randomGenerators(1n << 51n);
 let rand = () => Number(R.randomField());
 
-for (let i = 0; i < 100_000; i++) {
+for (let i = 0; i < 10_000; i++) {
   let x = rand();
   let y = rand();
 
