@@ -68,7 +68,6 @@ async function msmBasic(
   let scratch = Field.local.getPointers(40);
 
   tic("points to bucket map");
-  // TODO parallelize points to bucket sorting
   let pointsToBucket = await broadcastFromMain("pointsToBucket", () => {
     // K x N -> l in [0, L-1]
     let pointsToBucket: Uint32Array[] = Array(K);
