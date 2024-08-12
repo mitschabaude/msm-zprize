@@ -8,7 +8,7 @@ import type { MsmField } from "./field-msm.js";
 import type { MemorySection } from "./wasm/memory-helpers.js";
 import { createLog, splitBuckets, windowSize } from "./msm-common.js";
 import { log2 } from "./util.js";
-import { THREADS, barrier, isMain, thread } from "./threads/threads.js";
+import { THREADS, barrier, isMain, range, thread } from "./threads/threads.js";
 import { broadcastFromMain } from "./threads/global-pool.js";
 
 export { createMsmBasic, msmBasic };
@@ -75,20 +75,24 @@ async function msmBasic(
     for (let k = 0; k < K; k++) {
       pointsToBucket[k] = new Uint32Array(new SharedArrayBuffer(4 * N));
     }
-    for (let i = 0, si = scalarPtr; i < N; i++, si += sizeScalar) {
-      for (let k = 0, carry = 0; k < K; k++) {
-        let l = Scalar.extractBitSlice(si, k * c, c) + carry;
-        if (l > L) {
-          l = 2 * L - l;
-          carry = 1;
-        } else {
-          carry = 0;
-        }
-        pointsToBucket[k][i] = l | (carry << 31);
-      }
-    }
     return pointsToBucket;
   });
+
+  let [i, iend] = range(N);
+
+  for (let si = scalarPtr + i * sizeScalar; i < iend; i++, si += sizeScalar) {
+    for (let k = 0, carry = 0; k < K; k++) {
+      let l = Scalar.extractBitSlice(si, k * c, c) + carry;
+      if (l > L) {
+        l = 2 * L - l;
+        carry = 1;
+      } else {
+        carry = 0;
+      }
+      pointsToBucket[k][i] = l | (carry << 31);
+    }
+  }
+  await barrier();
   toc();
 
   tic("compute work split");
@@ -101,18 +105,21 @@ async function msmBasic(
 
   tic("accumulate and reduce");
   for (let { j, k, lstart, length } of chunksPerThread[thread]) {
-    tic(`chunk ${j}, length ${length} of partition ${k} - accumulate`);
+    tic();
     using _l = Field.local.atCurrentOffset;
     let buckets = Uint32Array.from(Field.local.getPointers(length, Curve.size));
     for (let l = 0; l < length; l++) setZero(buckets[l]);
 
     // accumulation
+    let nAdditions = 0;
+
     for (let i = 0, pi = pointPtr; i < N; i++, pi += size) {
       let l = pointsToBucket[k][i];
       let carry = l >>> 31;
       l &= 0x7f_ff_ff_ff;
       l -= lstart;
       if (l < 0 || l >= length) continue;
+      nAdditions++;
       let bucket = buckets[l];
       if (carry === 1) {
         subMixed(scratch, bucket, bucket, pi);
@@ -120,9 +127,15 @@ async function msmBasic(
         addMixed(scratch, bucket, bucket, pi);
       }
     }
-    toc();
+    let t = toc();
+    log(
+      `accumulate (chunk ${k}.${j}): ${t.toFixed(0)}ms, ${nAdditions} adds, ${(
+        (t / nAdditions) *
+        1e6
+      ).toFixed(1)}ns / add`
+    );
 
-    tic(`chunk ${j}, length ${length} of partition ${k} - reduce`);
+    tic(`reduce (chunk ${k}.${j})`);
     // reduce into sum
     let sum = chunkSumsPerPartition[k][j];
     reduceBucketsChunk(inputs, sum, buckets, lstart);
