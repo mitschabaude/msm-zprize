@@ -120,6 +120,16 @@ let module = Module({ exports: { madd: maddWasm } });
 let { instance } = await module.instantiate();
 let madd = instance.exports.madd;
 
+let mBytes = new Uint8Array(8);
+let mView = new DataView(mBytes.buffer);
+
+function mantissaFromNumber(x: number): bigint {
+  mView.setFloat64(0, x, false);
+  mBytes[0] = 0;
+  mBytes[1] &= 0b0000_1111;
+  return mView.getBigUint64(0, false);
+}
+
 let c103 = 2 ** 103;
 let c51x3 = 3 * 2 ** 51;
 
@@ -135,8 +145,7 @@ for (let i = 0; i < 10_000; i++) {
   let loAdd = c103 + c51x3 - hi;
   let lo = madd(x, y, loAdd);
   let loCorr = lo - c51x3;
-
-  let hiM = mantissa(numberToBytes(hi));
+  let hiM = mantissaFromNumber(hi);
 
   let xyBig = BigInt(x) * BigInt(y);
   let xyFma = (hiM << 51n) + BigInt(loCorr);
