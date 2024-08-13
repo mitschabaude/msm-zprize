@@ -93,6 +93,10 @@ function numberToFloat(x: number): Float {
   return { sign, exponent, mantissa };
 }
 
+function toFloat(x: number): Float {
+  return bytesToFloat(numberToBytes(x));
+}
+
 for (let i = 0; i < 1_000; i++) {
   let x = Math.random();
 
@@ -129,9 +133,26 @@ function mantissaFromNumber(x: number): bigint {
   mBytes[1] &= 0b0000_1111;
   return mView.getBigUint64(0, false);
 }
+function numberToBigint64(x: number): bigint {
+  mView.setFloat64(0, x, false);
+  return mView.getBigUint64(0, false);
+}
+function floatToBigint64(x: Float): bigint {
+  let xBytes = floatToBytes(x);
+  let view = new DataView(xBytes.buffer);
+  return view.getBigUint64(0, false);
+}
 
 let c103 = 2 ** 103;
 let c51x3 = 3 * 2 ** 51;
+let c2 = c103 + c51x3;
+
+// constants we have to subtract after reinterpreting raw float bytes as int64
+let hiPre = floatToBigint64({ sign: "pos", exponent: 103, mantissa: 0n });
+let loPre = numberToBigint64(c51x3);
+
+console.log("hiPre", `0x${hiPre.toString(16)}n`); // 0x4660000000000000n
+console.log("loPre", `0x${loPre.toString(16)}n`); // 0x4338000000000000n
 
 // random 51 bit numbers
 let R = randomGenerators(1n << 51n);
@@ -142,12 +163,12 @@ for (let i = 0; i < 10_000; i++) {
   let y = rand();
 
   let hi = madd(x, y, c103);
-  let loAdd = c103 + c51x3 - hi;
-  let lo = madd(x, y, loAdd);
-  let loCorr = lo - c51x3;
-  let hiM = mantissaFromNumber(hi);
+  let lo = madd(x, y, c2 - hi);
+
+  let loRaw = numberToBigint64(lo);
+  let hiRaw = numberToBigint64(hi);
 
   let xyBig = BigInt(x) * BigInt(y);
-  let xyFma = (hiM << 51n) + BigInt(loCorr);
+  let xyFma = ((hiRaw - hiPre) << 51n) + (loRaw - loPre);
   assertDeepEqual(xyBig, xyFma);
 }
