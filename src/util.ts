@@ -100,7 +100,7 @@ function bigintToLimbs(x0: bigint, w: number, n: number) {
  * @param n number of limbs
  */
 function bigintToLimbsRelaxed(x0: bigint, w: number, n: number) {
-  let limbs: bigint[] = Array(n);
+  let limbs = new BigUint64Array(n);
   let wn = BigInt(w);
   let wordMax = (1n << wn) - 1n;
   for (let i = 0; i < n; i++) {
