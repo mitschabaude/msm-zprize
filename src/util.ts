@@ -5,6 +5,7 @@ export {
   bigintToBytes32,
   bigintToBits,
   bigintToLimbs,
+  bigintToLimbsRelaxed,
   bigintFromLimbs,
   logBytesAsBigint,
   log2,
@@ -86,6 +87,26 @@ function bigintToLimbs(x0: bigint, w: number, n: number) {
     x0 >>= wn;
   }
   if (x0 !== 0n) throw Error("input too large");
+  return limbs;
+}
+
+/**
+ * Split bigint into n w-bit limbs, which are also bigints
+ *
+ * In contrast to {@link bigintToLimbs}, this function allows high limbs larger than w bits.
+ *
+ * @param x0
+ * @param w word size
+ * @param n number of limbs
+ */
+function bigintToLimbsRelaxed(x0: bigint, w: number, n: number) {
+  let limbs: bigint[] = Array(n);
+  let wn = BigInt(w);
+  let wordMax = (1n << wn) - 1n;
+  for (let i = 0; i < n; i++) {
+    limbs[i] = x0 & wordMax;
+    x0 >>= wn;
+  }
   return limbs;
 }
 

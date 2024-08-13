@@ -2,6 +2,10 @@
 import { f64, f64x2, func, Module } from "wasmati";
 import { randomGenerators } from "../bigint/field-random.js";
 import { assertDeepEqual } from "../testing/nested.js";
+import { pallasParams } from "../concrete/pasta.params.js";
+import { createField, inverse } from "../bigint/field.js";
+import { bigintFromLimbs, bigintToLimbsRelaxed } from "../util.js";
+import { equivalent, Spec } from "../testing/equivalent.js";
 
 function numberToBytes(x: number): Uint8Array {
   let xBytes = new Uint8Array(8);
@@ -156,11 +160,11 @@ console.log("loPre", `0x${loPre.toString(16)}n`); // 0x4338000000000000n
 
 // random numbers that can be 5 limbs of a number q < 2^255 + 2^253
 // e.g., q = 2p where p is one of the Pasta primes or any < 254 bit prime
-let R = randomGenerators((1n << 51n) + (1n << 49n));
+let rng = randomGenerators((1n << 51n) + (1n << 49n));
 
 for (let i = 0; i < 10_000; i++) {
-  let x = Number(R.randomField());
-  let y = Number(R.randomField());
+  let x = Number(rng.randomField());
+  let y = Number(rng.randomField());
 
   let hi = madd(x, y, c103);
   let lo = madd(x, y, c2 - hi);
@@ -172,3 +176,86 @@ for (let i = 0; i < 10_000; i++) {
   let xyFma = ((hiRaw - hiPre) << 51n) + (loRaw - loPre);
   assertDeepEqual(xyBig, xyFma);
 }
+
+// modmul with 5 x 51-bit limbs
+// highest limb slightly larger than 51 bits => can represent all numbers < 2p, so we can use montgomery w/o correction
+let Fp = createField(pallasParams.modulus);
+let p = Fp.modulus;
+let P = bigintToLimbsRelaxed(p, 51, 5);
+let pInv = inverse(-p, 1n << 51n);
+let R = Fp.mod(1n << 255n);
+let Rinv = Fp.inverse(R);
+let mask = (1n << 51n) - 1n;
+
+function split(x: bigint) {
+  return [x & mask, x >> 51n];
+}
+
+let field = Spec.field(p, { relaxed: true });
+let fieldStrict = Spec.field(p, { relaxed: false });
+
+// simple, inefficient reference implementation of montgomery multiplication
+
+function montmulSimple(x: bigint, y: bigint) {
+  let pInv = inverse(-p, 1n << 255n);
+  let xy = x * y;
+  let q = ((xy & ((1n << 255n) - 1n)) * pInv) & ((1n << 255n) - 1n);
+  let z = (xy + q * p) >> 255n;
+  return z < p ? z : z - p;
+}
+
+function montmulRef(xR: bigint, yR: bigint) {
+  let zR2 = Fp.multiply(xR, yR);
+  return Fp.multiply(zR2, Rinv);
+}
+
+// montmul with the correction step is (exactly) the same as multiplying and dividing by the Montgomery radius
+equivalent({ from: [field, field], to: fieldStrict, verbose: true })(
+  montmulSimple,
+  montmulRef,
+  "montmul ref"
+);
+
+function montmul(x: bigint, y: bigint) {
+  let X = bigintToLimbsRelaxed(x, 51, 5);
+  let Y = bigintToLimbsRelaxed(y, 51, 5);
+
+  let Z: bigint[] = Array(5);
+  for (let i = 0; i < 5; i++) Z[i] = 0n;
+
+  for (let i = 0; i < 5; i++) {
+    for (let j = 0; j < 5; j++) {
+      Z[j] += X[i] * Y[j];
+    }
+
+    // Z += qi * P, such that Z % 2^51 = 0
+    let qi = ((Z[0] & mask) * pInv) & mask;
+
+    for (let j = 0; j < 5; j++) {
+      Z[j] += qi * P[j];
+    }
+
+    // shift down and propagate carry
+    let carry = Z[0] >> 51n;
+    for (let j = 0; j < 4; j++) {
+      [Z[j], carry] = split(Z[j + 1] + carry);
+    }
+    Z[4] = carry;
+  }
+  return bigintFromLimbs(Z, 51, 5);
+}
+
+// the vectorized and bigint versions of montmul are equivalent
+equivalent({ from: [field, field], to: field, verbose: true })(
+  montmulSimple,
+  montmul,
+  "montmul consistent"
+);
+
+// given inputs < p, montmul returns a value < 2p
+// this means it will need a correction step in many places! (we can't go from 2p to 2p, because the Montgomery radius is too small)
+equivalent({ from: [field, field], to: Spec.boolean, verbose: true })(
+  (x, y) => montmul(x, y) < 2n * p,
+  () => true,
+  "montmul < 2p"
+);
