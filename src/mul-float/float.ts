@@ -4,7 +4,7 @@ import { randomGenerators } from "../bigint/field-random.js";
 import { assertDeepEqual } from "../testing/nested.js";
 import { pallasParams } from "../concrete/pasta.params.js";
 import { createField, inverse } from "../bigint/field.js";
-import { bigintFromLimbs, bigintToLimbsRelaxed } from "../util.js";
+import { bigintFromLimbs, bigintToLimbsRelaxed, log2 } from "../util.js";
 import { equivalent, Spec } from "../testing/equivalent.js";
 
 function numberToBytes(x: number): Uint8Array {
@@ -220,32 +220,36 @@ function montmul(x: bigint, y: bigint) {
   let X = bigintToLimbsRelaxed(x, 51, 5);
   let Y = bigintToLimbsRelaxed(y, 51, 5);
 
-  let Z: bigint[] = Array(5);
-  for (let i = 0; i < 5; i++) Z[i] = 0n;
+  let Z: bigint[] = Array(6);
+  for (let i = 0; i < 6; i++) Z[i] = 0n;
 
   for (let i = 0; i < 5; i++) {
     for (let j = 0; j < 5; j++) {
-      Z[j] += X[i] * Y[j];
+      let [lo, hi] = split(X[i] * Y[j]);
+      Z[j] += lo;
+      Z[j + 1] += hi;
     }
 
     // Z += qi * P, such that Z % 2^51 = 0
-    let qi = ((Z[0] & mask) * pInv) & mask;
+    let qi = (Z[0] * pInv) & mask;
 
     for (let j = 0; j < 5; j++) {
-      Z[j] += qi * P[j];
+      let [lo, hi] = split(qi * P[j]);
+      Z[j] += lo;
+      Z[j + 1] += hi;
     }
 
-    // shift down and propagate carry
-    let carry = Z[0] >> 51n;
-    for (let j = 0; j < 4; j++) {
-      [Z[j], carry] = split(Z[j + 1] + carry);
+    // shift down after propagating carry from first limb
+    Z[1] += Z[0] >> 51n;
+    for (let j = 0; j < 5; j++) {
+      Z[j] = Z[j + 1];
     }
-    Z[4] = carry;
+    Z[5] = 0n;
   }
-  return bigintFromLimbs(Z, 51, 5);
+  return bigintFromLimbs(Z, 51, 6);
 }
 
-// the vectorized and bigint versions of montmul are equivalent
+// the bigint and array-based versions of montmul are equivalent
 equivalent({ from: [field, field], to: field, verbose: true })(
   montmulSimple,
   montmul,
