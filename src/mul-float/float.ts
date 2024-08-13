@@ -154,13 +154,13 @@ let loPre = numberToBigint64(c51x3);
 console.log("hiPre", `0x${hiPre.toString(16)}n`); // 0x4660000000000000n
 console.log("loPre", `0x${loPre.toString(16)}n`); // 0x4338000000000000n
 
-// random 51 bit numbers
-let R = randomGenerators(1n << 51n);
-let rand = () => Number(R.randomField());
+// random numbers that can be 5 limbs of a number q < 2^255 + 2^253
+// e.g., q = 2p where p is one of the Pasta primes or any < 254 bit prime
+let R = randomGenerators((1n << 51n) + (1n << 49n));
 
 for (let i = 0; i < 10_000; i++) {
-  let x = rand();
-  let y = rand();
+  let x = Number(R.randomField());
+  let y = Number(R.randomField());
 
   let hi = madd(x, y, c103);
   let lo = madd(x, y, c2 - hi);
