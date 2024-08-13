@@ -141,6 +141,10 @@ function numberToBigint64(x: number): bigint {
   mView.setFloat64(0, x, false);
   return mView.getBigUint64(0, false);
 }
+function bigint64ToNumber(x: bigint): number {
+  mView.setBigUint64(0, x, false);
+  return mView.getFloat64(0, false);
+}
 function floatToBigint64(x: Float): bigint {
   let xBytes = floatToBytes(x);
   let view = new DataView(xBytes.buffer);
@@ -148,13 +152,16 @@ function floatToBigint64(x: Float): bigint {
 }
 
 let c103 = 2 ** 103;
+let c52 = 2 ** 52;
 let c51x3 = 3 * 2 ** 51;
 let c2 = c103 + c51x3;
 
 // constants we have to subtract after reinterpreting raw float bytes as int64
 let hiPre = floatToBigint64({ sign: "pos", exponent: 103, mantissa: 0n });
 let loPre = numberToBigint64(c51x3);
+let initialPre = floatToBigint64({ sign: "pos", exponent: 52, mantissa: 0n });
 
+console.log("initial", `0x${initialPre.toString(16)}n`);
 console.log("hiPre", `0x${hiPre.toString(16)}n`); // 0x4660000000000000n
 console.log("loPre", `0x${loPre.toString(16)}n`); // 0x4338000000000000n
 
@@ -163,16 +170,18 @@ console.log("loPre", `0x${loPre.toString(16)}n`); // 0x4338000000000000n
 let rng = randomGenerators((1n << 51n) + (1n << 49n));
 
 for (let i = 0; i < 10_000; i++) {
-  let x = Number(rng.randomField());
-  let y = Number(rng.randomField());
+  let x = rng.randomField();
+  let y = rng.randomField();
+  let xF = bigint64ToNumber(x + initialPre) - c52;
+  let yF = bigint64ToNumber(y + initialPre) - c52;
 
-  let hi = madd(x, y, c103);
-  let lo = madd(x, y, c2 - hi);
+  let hi = madd(xF, yF, c103);
+  let lo = madd(xF, yF, c2 - hi);
 
   let loRaw = numberToBigint64(lo);
   let hiRaw = numberToBigint64(hi);
 
-  let xyBig = BigInt(x) * BigInt(y);
+  let xyBig = x * y;
   let xyFma = ((hiRaw - hiPre) << 51n) + (loRaw - loPre);
   assertDeepEqual(xyBig, xyFma);
 }
