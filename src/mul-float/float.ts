@@ -220,7 +220,7 @@ function montmul(x: bigint, y: bigint) {
   let X = bigintToLimbsRelaxed(x, 51, 5);
   let Y = bigintToLimbsRelaxed(y, 51, 5);
 
-  let Z: bigint[] = Array(6);
+  let Z = new BigUint64Array(6);
   for (let i = 0; i < 6; i++) Z[i] = 0n;
 
   for (let i = 0; i < 5; i++) {
@@ -246,7 +246,7 @@ function montmul(x: bigint, y: bigint) {
     }
     Z[5] = 0n;
   }
-  return bigintFromLimbs(Z, 51, 6);
+  return bigintFromLimbs(Z, 51, 5);
 }
 
 // the bigint and array-based versions of montmul are equivalent
