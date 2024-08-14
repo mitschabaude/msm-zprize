@@ -343,7 +343,7 @@ for (let i = 0; i < 11; i++) {
 }
 
 function montmulFma(X: Float64Array, Y: Float64Array) {
-  let Z = new BigInt64Array(6);
+  let Z = new BigInt64Array(5);
 
   // initialize Z with constants that offset float64 prefixes
   for (let i = 0; i < 6; i++) {
@@ -351,34 +351,37 @@ function montmulFma(X: Float64Array, Y: Float64Array) {
   }
 
   for (let i = 0; i < 5; i++) {
-    let xF = X[i];
+    let xi = X[i];
 
-    for (let j = 0; j < 5; j++) {
-      let yF = Y[j];
-      let hi = madd(xF, yF, c103);
-      let lo = madd(xF, yF, c2 - hi);
-      Z[j] += numberToBigint64(lo);
-      Z[j + 1] += numberToBigint64(hi);
-    }
+    let yj = Y[0];
+    let hi1 = madd(xi, yj, c103);
+    let lo1 = madd(xi, yj, c2 - hi1);
+    Z[0] += numberToBigint64(lo1);
+    let carry = numberToBigint64(hi1);
 
-    // Z += qi * P, such that Z % 2^51 = 0
     let qi = bigint64ToNumber(((Z[0] * pInv) & mask51) | c51n) - c51;
-    xF = qi;
 
-    for (let j = 0; j < 5; j++) {
-      let yF = PF[j];
-      let hi = madd(xF, yF, c103);
-      let lo = madd(xF, yF, c2 - hi);
-      Z[j] += numberToBigint64(lo);
-      Z[j + 1] += numberToBigint64(hi);
-    }
+    let hi2 = madd(qi, PF[0], c103);
+    let lo2 = madd(qi, PF[0], c2 - hi2);
+    carry += numberToBigint64(hi2) + ((Z[0] + numberToBigint64(lo2)) >> 51n);
 
-    // shift down after propagating carry from first limb
-    Z[1] += Z[0] >> 51n;
-    for (let j = 0; j < 5; j++) {
-      Z[j] = Z[j + 1];
+    for (let j = 1; j < 5; j++) {
+      let yj = Y[j];
+      let zj = Z[j] + carry;
+      let hi1 = madd(xi, yj, c103);
+      let lo1 = madd(xi, yj, c2 - hi1);
+      zj += numberToBigint64(lo1);
+      carry = numberToBigint64(hi1);
+
+      let pj = PF[j];
+      let hi2 = madd(qi, pj, c103);
+      let lo2 = madd(qi, pj, c2 - hi2);
+      zj += numberToBigint64(lo2);
+      carry += numberToBigint64(hi2);
+
+      Z[j - 1] = zj;
     }
-    Z[5] = zInitial[6 + i];
+    Z[4] = zInitial[5 + i] + carry;
   }
 
   // propagate carries to make limbs positive
