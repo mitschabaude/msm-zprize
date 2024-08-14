@@ -13,11 +13,14 @@
 // IEEE floating point manipulation
 import {
   $,
+  call,
   f64,
   f64x2,
   func,
   i32,
+  i64,
   i64x2,
+  importFunc,
   importMemory,
   local,
   Local,
@@ -33,6 +36,7 @@ import { equivalent, spec, Spec } from "../testing/equivalent.js";
 import { Random } from "../testing/random.js";
 import { memoryHelpers } from "../wasm/memory-helpers.js";
 import { createEquivalentWasm, wasmSpec } from "../testing/equivalent-wasm.js";
+import { Tuple } from "../types.js";
 
 function numberToBytes(x: number): Uint8Array {
   let xBytes = new Uint8Array(8);
@@ -357,10 +361,12 @@ for (let i = 0; i < 11; i++) {
 }
 
 function montmulFma(X: Float64Array, Y: Float64Array) {
+  console.log("js", 99, Y);
+
   let Z = new BigInt64Array(5);
 
   // initialize Z with constants that offset float64 prefixes
-  for (let i = 0; i < 6; i++) {
+  for (let i = 0; i < 5; i++) {
     Z[i] = zInitial[i];
   }
 
@@ -372,7 +378,7 @@ function montmulFma(X: Float64Array, Y: Float64Array) {
     let lo1 = madd(xi, yj, c2 - hi1);
     Z[0] += numberToBigint64(lo1);
 
-    let qi = bigint64ToNumber(((Z[0] * pInv) & mask51) | c51n) - c51;
+    let qi = bigint64ToNumber(((Z[0] * pInv) & mask51) + c51n) - c51;
 
     let hi2 = madd(qi, PF[0], c103);
     let lo2 = madd(qi, PF[0], c2 - hi2);
@@ -446,6 +452,22 @@ function constI64x2(x: bigint) {
   return v128.const("i64x2", [x, x]);
 }
 
+let log = (...args: any) => console.log("wasm", ...args);
+
+let logI64 = importFunc({ in: [i32, i64], out: [] }, log);
+let logF64 = importFunc({ in: [i32, f64], out: [] }, log);
+
+let logF64x2_0 = func({ in: [i32, v128], out: [] }, ([i, x]) => {
+  local.get(x);
+  f64x2.extract_lane(0);
+  call(logF64, [i, $]);
+});
+let logI64x2_0 = func({ in: [i32, v128], out: [] }, ([i, x]) => {
+  local.get(x);
+  i64x2.extract_lane(0);
+  call(logI64, [i, $]);
+});
+
 let multiplyWasm = func(
   {
     in: [i32, i32, i32], // pointers to z, x, y, where z = x * y
@@ -467,7 +489,12 @@ let multiplyWasm = func(
     let Z = rest.slice(5, 10);
 
     // load y from memory into locals
-    FieldPair.load(Y, y);
+    for (let i = 0; i < 5; i++) {
+      let xi = v128.load({ offset: i * 16 }, y);
+      local.set(Y[i], xi);
+      // WRONG
+      call(logF64x2_0, [99, Y[i]]);
+    }
 
     // initialize Z with constants that offset float64 prefixes
     for (let i = 0; i < 5; i++) {
@@ -542,7 +569,7 @@ let multiplyWasm = func(
   }
 );
 
-let wasmMemory = importMemory({ min: 1, max: 1, shared: true });
+let wasmMemory = importMemory({ min: 1000, max: 1000, shared: true });
 let memory = wasmMemory.value;
 let multiplyModule = Module({
   memory: wasmMemory,
@@ -550,6 +577,7 @@ let multiplyModule = Module({
 });
 let { instance: mulInstance } = await multiplyModule.instantiate();
 let sizeField = 8 * 5;
+let sizeFieldPair = 2 * sizeField;
 
 const Field = {
   multiply: mulInstance.exports.multiply,
@@ -560,7 +588,7 @@ const Field = {
   writeBigint(x: number, x0: bigint) {
     let arr = new Float64Array(memory.buffer, x, 5);
     for (let i = 0; i < 5; i++) {
-      arr[i] = Number(x0 & mask51);
+      arr[i] = int64ToFloat52(x0 & mask51);
       x0 >>= 51n;
     }
   },
@@ -571,13 +599,7 @@ const Field = {
 
   readBigint(x: number) {
     let arr = new Float64Array(memory.buffer.slice(x, x + sizeField));
-    let x0 = 0n;
-    let bitPosition = 0n;
-    for (let i = 0; i < arr.length; i++) {
-      x0 += BigInt(arr[i]) << bitPosition;
-      bitPosition += 51n;
-    }
-    return x0;
+    return bigintFromFloat51Limbs(arr);
   },
   readBigintPair(x: number) {
     let x0 = this.readBigint(x);
@@ -586,8 +608,28 @@ const Field = {
   },
 };
 
+let x = Field.local.getPointer(sizeFieldPair);
+let y = Field.local.getPointer(sizeFieldPair);
+let z = Field.local.getPointer(sizeFieldPair);
+
+Field.writeBigintPair(x, 1n, 1n);
+Field.writeBigintPair(y, R, 1n);
+
+let xs = Field.readBigintPair(x);
+let ys = Field.readBigintPair(y);
+assertDeepEqual(xs, [1n, 1n], "roundtrip");
+assertDeepEqual(ys, [R, 1n], "roundtrip");
+
+Field.multiply(z, x, y);
+let [z00, z01] = Field.readBigintPair(z);
+
+let z10 = montMulFmaWrapped(1n, R);
+assertDeepEqual(z00, z10, "montmul");
+let z11 = montMulFmaWrapped(1n, 1n);
+assertDeepEqual(z01, z11, "montmul");
+
 let fieldWasm = wasmSpec(Field, field.rng, {
-  size: Field.sizeField,
+  size: sizeFieldPair,
   there: (xPtr, x) => Field.writeBigintPair(xPtr, x, x),
   back: Field.readBigint,
 });
@@ -596,7 +638,10 @@ let eqivalentWasm = createEquivalentWasm(Field);
 
 // wasm version is exactly equivalent to montmulFma
 eqivalentWasm(
-  { from: [fieldWasm, fieldWasm], to: fieldWasm },
+  {
+    from: [Spec.constant(fieldWasm, 1n), Spec.constant(fieldWasm, 1n)],
+    to: fieldWasm,
+  },
   montMulFmaWrapped,
   Field.multiply,
   "montmul wasm"
