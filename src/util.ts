@@ -138,7 +138,11 @@ function bigintToLimbsSigned(x: bigint, w: number, n: number) {
 //   bigintToLimbsSigned(((X / 2n - 1n) * (X ** 9n - 1n)) / (X - 1n), 29, 9)
 // );
 
-function bigintFromLimbs(x: BigUint64Array | bigint[], w: number, n: number) {
+function bigintFromLimbs(
+  x: BigUint64Array | BigInt64Array | bigint[],
+  w: number,
+  n: number
+) {
   let wn = BigInt(w);
   let x0 = x[n - 1];
   for (let i = n - 2; i >= 0; i--) {
