@@ -344,6 +344,7 @@ for (let i = 0; i < 11; i++) {
 
 function montmulFma(X: Float64Array, Y: Float64Array) {
   let Z = new BigInt64Array(6);
+
   // initialize Z with constants that offset float64 prefixes
   for (let i = 0; i < 6; i++) {
     Z[i] = zInitial[i];
@@ -386,17 +387,16 @@ function montmulFma(X: Float64Array, Y: Float64Array) {
   for (let i = 0; i < 5; i++) {
     let lo = (Z[i] + carry) & mask51;
     carry = Z[i] >> 51n;
-    Z[i] = lo;
-    assert(Z[i] >= 0n, `negative limb ${i}`);
+    Z[i] = lo + c52n; // part of conversion to float64
   }
   assert(carry === 0n, `carry ${carry}`);
 
   // convert to float64s
-  let floats = new Float64Array(5);
+  let floats = new Float64Array(Z.buffer);
   for (let i = 0; i < 5; i++) {
-    floats[i] = bigint64ToNumber(Z[i] | c52n) - c52;
+    floats[i] -= c52;
+    assert(floats[i] >= 0, `negative limb ${i}`);
   }
-
   return floats;
 }
 
