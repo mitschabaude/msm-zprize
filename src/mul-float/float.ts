@@ -11,7 +11,20 @@
  */
 
 // IEEE floating point manipulation
-import { f64, f64x2, func, Module } from "wasmati";
+import {
+  $,
+  f64,
+  f64x2,
+  func,
+  i32,
+  i64,
+  i64x2,
+  local,
+  Local,
+  Module,
+  Type,
+  v128,
+} from "wasmati";
 import { randomGenerators } from "../bigint/field-random.js";
 import { assertDeepEqual } from "../testing/nested.js";
 import { pallasParams } from "../concrete/pasta.params.js";
@@ -384,19 +397,14 @@ function montmulFma(X: Float64Array, Y: Float64Array) {
   // propagate carries to make limbs positive
   // not sure this is needed
   let carry = 0n;
+  let floats = new Float64Array(5);
   for (let i = 0; i < 5; i++) {
     let lo = (Z[i] + carry) & mask51;
+    floats[i] = bigint64ToNumber(lo + c52n) - c52;
+    assert(floats[i] >= 0, `negative limb ${i}`);
     carry = Z[i] >> 51n;
-    Z[i] = lo + c52n; // part of conversion to float64
   }
   assert(carry === 0n, `carry ${carry}`);
-
-  // convert to float64s
-  let floats = new Float64Array(Z.buffer);
-  for (let i = 0; i < 5; i++) {
-    floats[i] -= c52;
-    assert(floats[i] >= 0, `negative limb ${i}`);
-  }
   return floats;
 }
 
@@ -412,4 +420,124 @@ equivalent({ from: [field, field], to: fieldStrict, verbose: true })(
   montmul,
   montMulFmaWrapped,
   "montmulFma"
+);
+
+let nLocalsV128 = [v128, v128, v128, v128, v128] as const;
+let w = 51;
+
+const FieldPair = {
+  load(X: Local<v128>[], x: Local<i32>) {
+    for (let i = 0; i < 5; i++) {
+      let xi = v128.load({ offset: i * 16 }, x);
+      local.set(X[i], xi);
+    }
+  },
+  store(x: Local<i32>, X: Local<v128>[]) {
+    for (let i = 0; i < 5; i++) {
+      v128.store({ offset: i * 16 }, x, X[i]);
+    }
+  },
+};
+
+function constF64x2(x: number) {
+  return v128.const("f64x2", [x, x]);
+}
+function constI64x2(x: bigint) {
+  return v128.const("i64x2", [x, x]);
+}
+
+let multiplyWasm = func(
+  {
+    in: [i32, i32, i32], // pointers to z, x, y, where z = x * y
+    out: [],
+    locals: [
+      v128,
+      v128,
+      v128,
+      v128,
+      v128,
+      v128,
+      v128,
+      ...nLocalsV128,
+      ...nLocalsV128,
+    ],
+  },
+  ([z, x, y], [xi, qi, hi1, hi2, lo1, lo2, carry, ...rest]) => {
+    let Y = rest.slice(0, 5);
+    let Z = rest.slice(5, 10);
+
+    // load y from memory into locals
+    FieldPair.load(Y, y);
+
+    // initialize Z with constants that offset float64 prefixes
+    for (let i = 0; i < 5; i++) {
+      local.set(Z[i], constI64x2(zInitial[i]));
+    }
+
+    for (let i = 0; i < 5; i++) {
+      local.set(xi, v128.load({ offset: i * 16 }, x));
+      let yj = Y[0];
+      let pj = PF[0];
+
+      f64x2.relaxed_madd(xi, yj, constF64x2(c103));
+      local.set(hi1);
+      f64x2.relaxed_madd(xi, yj, f64x2.sub(constF64x2(c2), hi1));
+      local.set(lo1);
+      local.set(Z[0], i64x2.add(Z[0], lo1));
+
+      // compute qi
+      i64x2.mul(Z[0], constI64x2(pInv));
+      v128.and($, constI64x2(mask51));
+      i64x2.add($, constI64x2(c51n));
+      f64x2.sub($, constF64x2(c51));
+      local.set(qi);
+
+      f64x2.relaxed_madd(qi, constF64x2(pj), constF64x2(c103));
+      local.set(hi2);
+      f64x2.relaxed_madd(qi, constF64x2(pj), f64x2.sub(constF64x2(c2), hi2));
+      local.set(lo2);
+
+      // compute carry from Z[0]
+      i64x2.add(hi1, hi2);
+      i64x2.add(Z[0], lo2);
+      i64x2.shr_s($, 51);
+      local.set(carry, i64x2.add($, $));
+
+      // inner loop
+      for (let j = 1; j < 5; j++) {
+        yj = Y[j];
+        pj = PF[j];
+
+        f64x2.relaxed_madd(xi, yj, constF64x2(c103));
+        local.set(hi1);
+        f64x2.relaxed_madd(qi, constF64x2(pj), constF64x2(c103));
+        local.set(hi2);
+        f64x2.relaxed_madd(xi, yj, f64x2.sub(constF64x2(c2), hi1));
+        local.set(lo1);
+        f64x2.relaxed_madd(qi, constF64x2(pj), f64x2.sub(constF64x2(c2), hi2));
+        local.set(lo2);
+
+        i64x2.add(Z[j], carry);
+        i64x2.add($, lo1);
+        i64x2.add($, lo2);
+        local.set(Z[j - 1]);
+
+        local.set(carry, i64x2.add(hi1, hi2));
+      }
+      i64x2.add(constI64x2(zInitial[5 + i]), carry);
+      local.set(Z[4]);
+    }
+
+    // propagate carries (to make limbs positive), convert to f64, store in memory
+    local.set(carry, constI64x2(0n));
+    for (let i = 0; i < 5; i++) {
+      i64x2.add(Z[i], carry);
+      v128.and($, constI64x2(mask51));
+      i64x2.add($, constI64x2(c52n));
+      f64x2.sub($, constF64x2(c52));
+      v128.store({ offset: i * 16 }, z, $);
+
+      if (i < 4) local.set(carry, i64x2.shr_s(Z[i], 51));
+    }
+  }
 );
