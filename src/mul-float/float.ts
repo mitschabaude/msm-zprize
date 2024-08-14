@@ -166,32 +166,37 @@ function floatToBigint64(x: Float): bigint {
 
 let c103 = 2 ** 103;
 let c52 = 2 ** 52;
+let c51 = 2 ** 52;
 let c51x3 = 3 * 2 ** 51;
 let c2 = c103 + c51x3;
 let shift51n = 1n << 51n;
 
 // constants we have to subtract after reinterpreting raw float bytes as int64
-let hiPre = floatToBigint64({ sign: "pos", exponent: 103, mantissa: 0n });
+let hiPre = numberToBigint64(c103);
 let loPre = numberToBigint64(c51x3);
-let initialPre = floatToBigint64({ sign: "pos", exponent: 52, mantissa: 0n });
+let c52n = numberToBigint64(c52);
+let c51n = numberToBigint64(c51);
 
 // or just mask out everything but the 52 mantissa bits
 let mask51 = (1n << 51n) - 1n;
 let mask52 = (1n << 52n) - 1n;
+let mask64 = (1n << 64n) - 1n;
 
-console.log("initial", `0x${initialPre.toString(16)}n`); // 0x4330000000000000n
+console.log("initial", `0x${c52n.toString(16)}n`); // 0x4330000000000000n
 console.log("hiPre", `0x${hiPre.toString(16)}n`); // 0x4660000000000000n
 console.log("loPre", `0x${loPre.toString(16)}n`); // 0x4338000000000000n
 
 // random numbers that can be 5 limbs of a number q < 2^255 + 2^253
 // e.g., q < 2p where p is one of the Pasta primes or any < 254 bit prime
-let rng = randomGenerators((1n << 51n) + (1n << 49n));
+let rng51 = randomGenerators(1n << 51n);
+let rng52 = randomGenerators(1n << 52n);
+let rng51eps = randomGenerators((1n << 51n) + (1n << 49n)); // also works when both x, y are sampled from this
 
 for (let i = 0; i < 10_000; i++) {
-  let x = rng.randomField();
-  let y = rng.randomField();
-  let xF = bigint64ToNumber(x | initialPre) - c52;
-  let yF = bigint64ToNumber(y | initialPre) - c52;
+  let x = rng52.randomField(); // note: x can be 52 bits long
+  let y = rng51.randomField();
+  let xF = bigint64ToNumber(x | c52n) - c52;
+  let yF = bigint64ToNumber(y | c52n) - c52;
 
   let hi = madd(xF, yF, c103);
   let lo = madd(xF, yF, c2 - hi);
@@ -290,24 +295,24 @@ equivalent({ from: [field, field], to: Spec.boolean, verbose: true })(
   "montmul < 2p"
 );
 
-function int64ToFloat64(x: bigint) {
-  return bigint64ToNumber(x | initialPre) - c52;
+function int64ToFloat52(x: bigint) {
+  return bigint64ToNumber(x | c51n) - c51;
 }
-function float51ToInt64(x: number) {
-  return numberToBigint64(x + c52) & mask52;
+function float52ToInt64(x: number) {
+  return numberToBigint64(x + c51) & mask51;
 }
 
-let int51 = spec(Random(() => rng.randomField()));
-let int51F = spec(Random(() => Number(rng.randomField())));
+let int51 = spec(Random(() => rng51.randomField()));
+let int51F = spec(Random(() => Number(rng51.randomField())));
 
 equivalent({ from: [int51], to: int51, verbose: true })(
   (x) => x,
-  (x) => float51ToInt64(int64ToFloat64(x)),
+  (x) => float52ToInt64(int64ToFloat52(x)),
   "int/float roundtrip"
 );
 equivalent({ from: [int51F], to: int51F, verbose: true })(
   (x) => x,
-  (x) => int64ToFloat64(float51ToInt64(x)),
+  (x) => int64ToFloat52(float52ToInt64(x)),
   "float/int roundtrip"
 );
 
@@ -316,22 +321,33 @@ function bigintToFloat51Limbs(x: bigint) {
   let limbs = bigintToLimbsRelaxed(x, 51, 5);
   let floats = new Float64Array(5);
   for (let i = 0; i < 5; i++) {
-    floats[i] = int64ToFloat64(limbs[i]);
+    floats[i] = int64ToFloat52(limbs[i]);
   }
   return floats;
 }
 function bigintFromFloat51Limbs(x: Float64Array) {
   let limbs = new BigUint64Array(5);
   for (let i = 0; i < 5; i++) {
-    limbs[i] = float51ToInt64(x[i]);
+    limbs[i] = float52ToInt64(x[i]);
   }
   return bigintFromLimbs(limbs, 51, 5);
 }
 
 let PF = bigintToFloat51Limbs(p);
 
+let zInitial = new BigInt64Array(11);
+let loCount = [1n, 2n, 3n, 4n, 5n, 4n, 3n, 2n, 1n, 0n, 0n];
+let hiCount = [0n, 1n, 2n, 3n, 4n, 5n, 4n, 3n, 2n, 1n, 0n];
+for (let i = 0; i < 11; i++) {
+  zInitial[i] = -((2n * (hiCount[i] * hiPre + loCount[i] * loPre)) & mask64);
+}
+
 function montmulFma(X: Float64Array, Y: Float64Array) {
   let Z = new BigInt64Array(6);
+  // initialize Z with constants that offset float64 prefixes
+  for (let i = 0; i < 6; i++) {
+    Z[i] = zInitial[i];
+  }
 
   for (let i = 0; i < 5; i++) {
     let xF = X[i];
@@ -340,24 +356,20 @@ function montmulFma(X: Float64Array, Y: Float64Array) {
       let yF = Y[j];
       let hi = madd(xF, yF, c103);
       let lo = madd(xF, yF, c2 - hi);
-      let loRaw = numberToBigint64(lo);
-      let hiRaw = numberToBigint64(hi);
-      Z[j] += loRaw - loPre;
-      Z[j + 1] += hiRaw - hiPre;
+      Z[j] += numberToBigint64(lo);
+      Z[j + 1] += numberToBigint64(hi);
     }
 
     // Z += qi * P, such that Z % 2^51 = 0
-    let qi = bigint64ToNumber(((Z[0] * pInv) & mask51) | initialPre) - c52;
+    let qi = bigint64ToNumber(((Z[0] * pInv) & mask51) | c51n) - c51;
     xF = qi;
 
     for (let j = 0; j < 5; j++) {
       let yF = PF[j];
       let hi = madd(xF, yF, c103);
       let lo = madd(xF, yF, c2 - hi);
-      let loRaw = numberToBigint64(lo);
-      let hiRaw = numberToBigint64(hi);
-      Z[j] += loRaw - loPre;
-      Z[j + 1] += hiRaw - hiPre;
+      Z[j] += numberToBigint64(lo);
+      Z[j + 1] += numberToBigint64(hi);
     }
 
     // shift down after propagating carry from first limb
@@ -365,7 +377,7 @@ function montmulFma(X: Float64Array, Y: Float64Array) {
     for (let j = 0; j < 5; j++) {
       Z[j] = Z[j + 1];
     }
-    Z[5] = 0n;
+    Z[5] = zInitial[6 + i];
   }
 
   // propagate carries to make limbs positive
@@ -382,7 +394,7 @@ function montmulFma(X: Float64Array, Y: Float64Array) {
   // convert to float64s
   let floats = new Float64Array(5);
   for (let i = 0; i < 5; i++) {
-    floats[i] = bigint64ToNumber(Z[i] | initialPre) - c52;
+    floats[i] = bigint64ToNumber(Z[i] | c52n) - c52;
   }
 
   return floats;
