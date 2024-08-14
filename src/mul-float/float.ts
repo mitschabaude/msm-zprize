@@ -357,29 +357,26 @@ function montmulFma(X: Float64Array, Y: Float64Array) {
     let hi1 = madd(xi, yj, c103);
     let lo1 = madd(xi, yj, c2 - hi1);
     Z[0] += numberToBigint64(lo1);
-    let carry = numberToBigint64(hi1);
 
     let qi = bigint64ToNumber(((Z[0] * pInv) & mask51) | c51n) - c51;
 
     let hi2 = madd(qi, PF[0], c103);
     let lo2 = madd(qi, PF[0], c2 - hi2);
-    carry += numberToBigint64(hi2) + ((Z[0] + numberToBigint64(lo2)) >> 51n);
+    let carry =
+      numberToBigint64(hi1) +
+      numberToBigint64(hi2) +
+      ((Z[0] + numberToBigint64(lo2)) >> 51n);
 
     for (let j = 1; j < 5; j++) {
       let yj = Y[j];
-      let zj = Z[j] + carry;
-      let hi1 = madd(xi, yj, c103);
-      let lo1 = madd(xi, yj, c2 - hi1);
-      zj += numberToBigint64(lo1);
-      carry = numberToBigint64(hi1);
-
       let pj = PF[j];
+      let hi1 = madd(xi, yj, c103);
       let hi2 = madd(qi, pj, c103);
+      let lo1 = madd(xi, yj, c2 - hi1);
       let lo2 = madd(qi, pj, c2 - hi2);
-      zj += numberToBigint64(lo2);
-      carry += numberToBigint64(hi2);
 
-      Z[j - 1] = zj;
+      Z[j - 1] = Z[j] + carry + numberToBigint64(lo1) + numberToBigint64(lo2);
+      carry = numberToBigint64(hi1) + numberToBigint64(hi2);
     }
     Z[4] = zInitial[5 + i] + carry;
   }
