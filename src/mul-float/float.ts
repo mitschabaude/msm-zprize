@@ -1,3 +1,15 @@
+/**
+ * Explorational code inspired by Niall Emmart's work on using FMA instructions for bigint multiplication.
+ *
+ * Paper:
+ *   "Faster Modular Exponentiation Using Double Precision Floating Point Arithmetic on the GPU."
+ *   2018 IEEE 25th Symposium on Computer Arithmetic (ARITH). IEEE Computer Society, 2018.
+ *   By Emmart, Zheng and Weems.
+ *
+ * Reference code:
+ * https://github.com/yrrid/submission-wasm-twisted-edwards (see FP51.java and FieldPair.c)
+ */
+
 // IEEE floating point manipulation
 import { f64, f64x2, func, Module } from "wasmati";
 import { randomGenerators } from "../bigint/field-random.js";
@@ -161,7 +173,7 @@ let hiPre = floatToBigint64({ sign: "pos", exponent: 103, mantissa: 0n });
 let loPre = numberToBigint64(c51x3);
 let initialPre = floatToBigint64({ sign: "pos", exponent: 52, mantissa: 0n });
 
-console.log("initial", `0x${initialPre.toString(16)}n`);
+console.log("initial", `0x${initialPre.toString(16)}n`); // 0x4330000000000000n
 console.log("hiPre", `0x${hiPre.toString(16)}n`); // 0x4660000000000000n
 console.log("loPre", `0x${loPre.toString(16)}n`); // 0x4338000000000000n
 
@@ -272,3 +284,5 @@ equivalent({ from: [field, field], to: Spec.boolean, verbose: true })(
   () => true,
   "montmul < 2p"
 );
+
+// - function to store a limb vector of int64s as float64s
