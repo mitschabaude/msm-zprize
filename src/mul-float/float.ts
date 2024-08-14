@@ -17,12 +17,11 @@ import {
   f64x2,
   func,
   i32,
-  i64,
   i64x2,
+  importMemory,
   local,
   Local,
   Module,
-  Type,
   v128,
 } from "wasmati";
 import { randomGenerators } from "../bigint/field-random.js";
@@ -32,6 +31,8 @@ import { createField, inverse } from "../bigint/field.js";
 import { assert, bigintFromLimbs, bigintToLimbsRelaxed } from "../util.js";
 import { equivalent, spec, Spec } from "../testing/equivalent.js";
 import { Random } from "../testing/random.js";
+import { memoryHelpers } from "../wasm/memory-helpers.js";
+import { createEquivalentWasm, wasmSpec } from "../testing/equivalent-wasm.js";
 
 function numberToBytes(x: number): Uint8Array {
   let xBytes = new Uint8Array(8);
@@ -423,7 +424,6 @@ equivalent({ from: [field, field], to: fieldStrict, verbose: true })(
 );
 
 let nLocalsV128 = [v128, v128, v128, v128, v128] as const;
-let w = 51;
 
 const FieldPair = {
   load(X: Local<v128>[], x: Local<i32>) {
@@ -540,4 +540,64 @@ let multiplyWasm = func(
       if (i < 4) local.set(carry, i64x2.shr_s(Z[i], 51));
     }
   }
+);
+
+let wasmMemory = importMemory({ min: 1, max: 1, shared: true });
+let memory = wasmMemory.value;
+let multiplyModule = Module({
+  memory: wasmMemory,
+  exports: { multiply: multiplyWasm },
+});
+let { instance: mulInstance } = await multiplyModule.instantiate();
+let sizeField = 8 * 5;
+
+const Field = {
+  multiply: mulInstance.exports.multiply,
+
+  ...memoryHelpers(p, 51, 5, { memory }),
+  sizeField,
+
+  writeBigint(x: number, x0: bigint) {
+    let arr = new Float64Array(memory.buffer, x, 5);
+    for (let i = 0; i < 5; i++) {
+      arr[i] = Number(x0 & mask51);
+      x0 >>= 51n;
+    }
+  },
+  writeBigintPair(x: number, x0: bigint, x1: bigint) {
+    this.writeBigint(x, x0);
+    this.writeBigint(x + sizeField, x1);
+  },
+
+  readBigint(x: number) {
+    let arr = new Float64Array(memory.buffer.slice(x, x + sizeField));
+    let x0 = 0n;
+    let bitPosition = 0n;
+    for (let i = 0; i < arr.length; i++) {
+      x0 += BigInt(arr[i]) << bitPosition;
+      bitPosition += 51n;
+    }
+    return x0;
+  },
+  readBigintPair(x: number) {
+    let x0 = this.readBigint(x);
+    let x1 = this.readBigint(x + sizeField);
+    return [x0, x1];
+  },
+};
+
+let fieldWasm = wasmSpec(Field, field.rng, {
+  size: Field.sizeField,
+  there: (xPtr, x) => Field.writeBigintPair(xPtr, x, x),
+  back: Field.readBigint,
+});
+
+let eqivalentWasm = createEquivalentWasm(Field);
+
+// wasm version is exactly equivalent to montmulFma
+eqivalentWasm(
+  { from: [fieldWasm, fieldWasm], to: fieldWasm },
+  montMulFmaWrapped,
+  Field.multiply,
+  "montmul wasm"
 );
