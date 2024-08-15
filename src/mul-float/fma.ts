@@ -38,6 +38,7 @@ import {
   bigintToFloat51Limbs,
 } from "./common.js";
 import { constF64x2, constI64x2 } from "./field-base.js";
+import { arithmetic } from "./arith.js";
 
 export { Multiply };
 
@@ -54,9 +55,11 @@ for (let i = 0; i < 11; i++) {
 
 let nLocalsV128 = [v128, v128, v128, v128, v128] as const;
 
-function Multiply(p: bigint): Multiply {
+function Multiply(p: bigint, options?: { reduce?: boolean }): Multiply {
   let pInv = inverse(-p, 1n << 51n);
   let PF = bigintToFloat51Limbs(p);
+
+  let Arith = arithmetic(p);
 
   let multiply = func(
     {
@@ -70,11 +73,12 @@ function Multiply(p: bigint): Multiply {
         v128,
         v128,
         v128,
+        i64,
         ...nLocalsV128,
         ...nLocalsV128,
       ],
     },
-    ([z, x, y], [xi, qi, hi1, hi2, lo1, lo2, carry, ...rest]) => {
+    ([z, x, y], [xi, qi, hi1, hi2, lo1, lo2, carry, tmp, ...rest]) => {
       let Y = rest.slice(0, 5);
       let Z = rest.slice(5, 10);
 
@@ -147,16 +151,28 @@ function Multiply(p: bigint): Multiply {
         local.set(Z[4]);
       }
 
-      // propagate carries (to make limbs positive), convert to f64, store in memory
+      // propagate carries (to make limbs positive)
       local.set(carry, constI64x2(0n));
       for (let i = 0; i < 5; i++) {
         i64x2.add(Z[i], carry);
-        v128.and($, constI64x2(mask51));
-        i64x2.add($, constI64x2(c52n));
+        if (i < 4) {
+          local.tee(Z[i]);
+          local.set(carry, i64x2.shr_s($, 51));
+          local.set(Z[i], v128.and(Z[i], constI64x2(mask51)));
+        } else {
+          local.set(Z[i], v128.and($, constI64x2(mask51)));
+        }
+      }
+      if (options?.reduce) {
+        Arith.i64x2.reduceLaneLocals(0, Z, tmp, carry);
+        Arith.i64x2.reduceLaneLocals(1, Z, tmp, carry);
+      }
+
+      // convert to f64, store in memory
+      for (let i = 0; i < 5; i++) {
+        i64x2.add(Z[i], constI64x2(c52n));
         f64x2.sub($, constF64x2(c52));
         v128.store({ offset: i * 16 }, z, $);
-
-        if (i < 4) local.set(carry, i64x2.shr_s(Z[i], 51));
       }
     }
   );

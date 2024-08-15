@@ -17,13 +17,18 @@ function validateAssumptions(modulus: bigint) {
 
 type WasmIntf = {
   multiply: (z: number, x: number, y: number) => void;
+  multiplyReduce: (z: number, x: number, y: number) => void;
 };
 
 async function createWasm(p: bigint, memSize = 1 << 16) {
   let wasmMemory = importMemory({ min: memSize, max: memSize, shared: true });
+
+  let { multiply } = Multiply(p);
+  let { multiply: multiplyReduce } = Multiply(p, { reduce: true });
+
   let multiplyModule = Module({
     memory: wasmMemory,
-    exports: { multiply: Multiply(p).multiply },
+    exports: { multiply, multiplyReduce },
   });
   let { instance } = await multiplyModule.instantiate();
 
@@ -120,14 +125,14 @@ class Field<Wasm> {
 
 // version with benchmark scripts
 
-type WasmIntfWithBenches = WasmIntf & {
+type WasmIntfWithBenches = {
   benchMultiply: (x: number, N: number) => void;
 };
 
 async function createWasmWithBenches(p: bigint) {
   let wasmMemory = importMemory({ min: 100, max: 100 });
 
-  let { multiply } = Multiply(p);
+  let { multiply } = Multiply(p, { reduce: true });
 
   const benchMultiply = func(
     { in: [i32, i32], locals: [i32], out: [] },

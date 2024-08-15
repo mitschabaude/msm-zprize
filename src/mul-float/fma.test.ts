@@ -13,7 +13,7 @@ import { assertDeepEqual } from "../testing/nested.js";
 import { pallasParams } from "../concrete/pasta.params.js";
 import { Random } from "../testing/random.js";
 import { createEquivalentWasm, wasmSpec } from "../testing/equivalent-wasm.js";
-import { montMulFmaWrapped } from "./fma-js.js";
+import { montMulFmaWrapped, montmulSimple } from "./fma-js.js";
 import { Field } from "./field.js";
 
 let p = pallasParams.modulus;
@@ -86,7 +86,7 @@ eqivalentWasm(
   { from: [field, field], to: field },
   montMulFmaWrapped,
   Fp.Wasm.multiply,
-  "montmul fma (wasm)"
+  "mul fma"
 );
 
 eqivalentWasm(
@@ -96,5 +96,24 @@ eqivalentWasm(
     montMulFmaWrapped(x[1], y[1]),
   ],
   Fp.Wasm.multiply,
-  "montmul fma pairwise"
+  "mul fma pairwise"
+);
+
+// when reducing, wasm version is exactly equivalent to montmulSimple
+
+eqivalentWasm(
+  { from: [field, field], to: field },
+  montmulSimple,
+  Fp.Wasm.multiplyReduce,
+  "mul reduce"
+);
+
+eqivalentWasm(
+  { from: [fieldPair, fieldPair], to: fieldPair },
+  (x, y): [bigint, bigint] => [
+    montmulSimple(x[0], y[0]),
+    montmulSimple(x[1], y[1]),
+  ],
+  Fp.Wasm.multiplyReduce,
+  "mul reduce pairwise"
 );

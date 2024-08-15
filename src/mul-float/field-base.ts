@@ -14,7 +14,21 @@ import {
 import { assert } from "../util.js";
 import { bigintToFloat51Limbs, bigintToInt51Limbs, mask51 } from "./common.js";
 
-export { createFieldBase, FieldBase, constF64x2, constI64x2 };
+export {
+  Field,
+  constF64x2,
+  constI64x2,
+  loadLimb,
+  storeLimb,
+  forEach,
+  forEachReversed,
+  load,
+  store,
+  I64x2,
+  F64x2,
+  i64x2Constants,
+  f64x2Constants,
+};
 
 function constF64x2(x: number) {
   return v128.const("f64x2", [x, x]);
@@ -25,141 +39,111 @@ function constI64x2(x: bigint) {
 
 // inline methods to operate on a field element stored as n * w-bit limbs
 
-type FieldBase = {
-  modulus: bigint;
-  size: number;
-
-  forEach(cb: (i: number) => void): void;
-  forEachReversed(cb: (i: number) => void): void;
-
-  loadLimb(ptr: Local<i32>, i: number): StackVar<v128>;
-  storeLimb(ptr: Local<i32>, i: number, value: Input<v128>): void;
-
-  load(X: Local<v128>[], x: Local<i32>): void;
-  store(x: Local<i32>, X: Input<v128>[]): void;
-
-  i64x2: {
-    P: BigUint64Array;
-    P2: BigUint64Array;
-    p(i: number): StackVar<v128>;
-    p2(i: number): StackVar<v128>;
-
-    loadLane(x: Local<i32>, i: number, lane: 0 | 1): StackVar<i64>;
-    loadLimbFirst(x: Local<i32>, i: number): StackVar<i64>;
-    loadLimbSecond(x: Local<i32>, i: number): StackVar<i64>;
-
-    const(x: bigint): StackVar<v128>;
-    carry(carry: StackVar<v128>, tmp: Local<v128>): void;
-  };
-  f64x2: {
-    P: Float64Array;
-    P2: Float64Array;
-    p(i: number): StackVar<v128>;
-    p2(i: number): StackVar<v128>;
-
-    loadLane(x: Local<i32>, i: number, lane: 0 | 1): StackVar<f64>;
-
-    const(x: number): StackVar<v128>;
-  };
-};
-
 const n = 5;
 
-function createFieldBase(p: bigint): FieldBase {
-  const size = 8 * n; // size in bytes
+function loadLimb(x: Local<i32>, i: number) {
+  assert(i >= 0, "positive index");
+  return v128.load({ offset: 16 * i }, x);
+}
+function storeLimb(x: Local<i32>, i: number, xi: Input<v128>) {
+  assert(i >= 0, "positive index");
+  v128.store({ offset: 16 * i }, x, xi);
+}
 
-  function loadLimb(x: Local<i32>, i: number) {
-    assert(i >= 0, "positive index");
-    return v128.load({ offset: 16 * i }, x);
+function forEach(callback: (i: number) => void) {
+  for (let i = 0; i < n; i++) {
+    callback(i);
   }
-  function storeLimb(x: Local<i32>, i: number, xi: Input<v128>) {
-    assert(i >= 0, "positive index");
-    v128.store({ offset: 16 * i }, x, xi);
+}
+function forEachReversed(callback: (i: number) => void) {
+  for (let i = n - 1; i >= 0; i--) {
+    callback(i);
   }
+}
 
-  function forEach(callback: (i: number) => void) {
-    for (let i = 0; i < n; i++) {
-      callback(i);
-    }
+function load(X: Local<v128>[], x: Local<i32>) {
+  for (let i = 0; i < n; i++) {
+    local.set(X[i], v128.load({ offset: 16 * i }, x));
   }
-  function forEachReversed(callback: (i: number) => void) {
-    for (let i = n - 1; i >= 0; i--) {
-      callback(i);
-    }
+}
+function store(x: Local<i32>, X: Input<v128>[]) {
+  for (let i = 0; i < n; i++) {
+    v128.store({ offset: 16 * i }, x, X[i]);
   }
+}
 
-  function load(X: Local<v128>[], x: Local<i32>) {
-    for (let i = 0; i < n; i++) {
-      local.set(X[i], v128.load({ offset: 16 * i }, x));
-    }
-  }
+const I64x2 = {
+  loadLane(x: Local<i32>, i: number, lane: 0 | 1) {
+    return i64.load({ offset: 16 * i + 8 * lane }, x);
+  },
+  storeLane(x: Local<i32>, i: number, lane: 0 | 1, xi: Input<i64>) {
+    i64.store({ offset: 16 * i + 8 * lane }, x, xi);
+  },
 
-  function store(x: Local<i32>, X: Input<v128>[]) {
-    for (let i = 0; i < n; i++) {
-      v128.store({ offset: 16 * i }, x, X[i]);
-    }
-  }
-
-  function carryI(input: StackVar<v128>, tmp: Local<v128>) {
+  loadLimbFirst(x: Local<i32>, i: number) {
+    return i64.load({ offset: 16 * i }, x);
+  },
+  loadLimbSecond(x: Local<i32>, i: number) {
+    return i64.load({ offset: 16 * i + 8 }, x);
+  },
+  const(x: bigint) {
+    return constI64x2(x);
+  },
+  carry(input: StackVar<v128>, tmp: Local<v128>) {
     // put carry on the stack
     local.tee(tmp, input);
     i64x2.shr_s($, 51);
-    // mod 2^w the current result
     v128.and(tmp, constI64x2(mask51));
-  }
+  },
+  carrySingle(input: StackVar<i64>, tmp: Local<i64>) {
+    // put carry on the stack
+    local.tee(tmp, input);
+    i64.shr_s($, 51n);
+    i64.and(tmp, mask51);
+  },
+};
 
-  let PF = bigintToFloat51Limbs(p);
-  let PF2 = bigintToFloat51Limbs(2n * p);
+const F64x2 = {
+  loadLane(x: Local<i32>, i: number, lane: 0 | 1) {
+    return f64.load({ offset: 16 * i + 8 * lane }, x);
+  },
+  storeLane(x: Local<i32>, i: number, lane: 0 | 1, xi: Input<f64>) {
+    f64.store({ offset: 16 * i + 8 * lane }, x, xi);
+  },
+};
 
-  let PI = bigintToInt51Limbs(p);
-  let PI2 = bigintToInt51Limbs(2n * p);
-
+function i64x2Constants(p: bigint) {
+  let P = bigintToInt51Limbs(p);
+  let P2 = bigintToInt51Limbs(2n * p);
   return {
-    modulus: p,
-    size,
-
-    loadLimb,
-    storeLimb,
-    load,
-    store,
-
-    forEach,
-    forEachReversed,
-
-    i64x2: {
-      P: PI,
-      P2: PI2,
-      p: (i: number) => constI64x2(PI[i]),
-      p2: (i: number) => constI64x2(PI2[i]),
-
-      loadLane(x, i, lane) {
-        return i64.load({ offset: 16 * i + 8 * lane }, x);
-      },
-      loadLimbFirst(x, i) {
-        return i64.load({ offset: 16 * i }, x);
-      },
-      loadLimbSecond(x, i) {
-        return i64.load({ offset: 16 * i + 8 }, x);
-      },
-      const(x) {
-        return constI64x2(x);
-      },
-      carry: carryI,
-    },
-
-    f64x2: {
-      P: PF,
-      P2: PF2,
-      p: (i: number) => constF64x2(PF[i]),
-      p2: (i: number) => constF64x2(PF2[i]),
-
-      loadLane(x, i, lane) {
-        return f64.load({ offset: 16 * i + 8 * lane }, x);
-      },
-
-      const(x) {
-        return constF64x2(x);
-      },
-    },
+    P,
+    P2,
+    p: (i: number) => constI64x2(P[i]),
+    p2: (i: number) => constI64x2(P2[i]),
   };
 }
+
+function f64x2Constants(p: bigint) {
+  let P = bigintToFloat51Limbs(p);
+  let P2 = bigintToFloat51Limbs(2n * p);
+  return {
+    P,
+    P2,
+    p: (i: number) => constF64x2(P[i]),
+    p2: (i: number) => constF64x2(P2[i]),
+  };
+}
+
+const Field = {
+  size: 16 * n,
+  loadLimb,
+  storeLimb,
+  forEach,
+  forEachReversed,
+  load,
+  store,
+  i64x2: I64x2,
+  f64x2: F64x2,
+  i64x2Constants,
+  f64x2Constants,
+};
