@@ -15,16 +15,18 @@ import { pallasParams } from "../concrete/pasta.params.js";
 import { equivalent, spec, Spec } from "../testing/equivalent.js";
 import { Random } from "../testing/random.js";
 import {
-  bigint64ToNumber,
-  float52ToInt64,
-  int64ToFloat52,
   madd,
   montmul,
   montMulFmaWrapped,
   montmulRef,
   montmulSimple,
-  numberToBigint64,
 } from "./fma-js.js";
+import {
+  bigint64ToNumber,
+  float52ToInt64,
+  int64ToFloat52,
+  numberToBigint64,
+} from "./common.js";
 
 // bigint mul using float madd instruction
 

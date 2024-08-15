@@ -13,15 +13,25 @@ import { f64, f64x2, func, Module } from "wasmati";
 import { pallasParams } from "../concrete/pasta.params.js";
 import { createField, inverse } from "../bigint/field.js";
 import { assert, bigintFromLimbs, bigintToLimbsRelaxed } from "../util.js";
+import {
+  bigint64ToNumber,
+  bigintFromFloat51Limbs,
+  bigintToFloat51Limbs,
+  c103,
+  c2,
+  c51,
+  c51n,
+  c52,
+  c52n,
+  hiPre,
+  loPre,
+  mask51,
+  mask64,
+  numberToBigint64,
+} from "./common.js";
 
 export {
-  numberToBigint64,
-  bigint64ToNumber,
-  float52ToInt64,
-  int64ToFloat52,
   madd,
-  bigintToFloat51Limbs,
-  bigintFromFloat51Limbs,
   montmulSimple,
   montmulRef,
   montmul,
@@ -41,34 +51,6 @@ const maddWasm = func({ in: [f64, f64, f64], out: [f64] }, ([x, y, z]) => {
 let module = Module({ exports: { madd: maddWasm } });
 let { instance } = await module.instantiate();
 let madd: (x: number, y: number, z: number) => number = instance.exports.madd;
-
-let mBytes = new Uint8Array(8);
-let mView = new DataView(mBytes.buffer);
-
-function numberToBigint64(x: number): bigint {
-  mView.setFloat64(0, x);
-  return mView.getBigUint64(0);
-}
-function bigint64ToNumber(x: bigint): number {
-  mView.setBigUint64(0, x);
-  return mView.getFloat64(0);
-}
-
-let c103 = 2 ** 103;
-let c52 = 2 ** 52;
-let c51 = 2 ** 52;
-let c51x3 = 3 * 2 ** 51;
-let c2 = c103 + c51x3;
-
-// constants we have to subtract after reinterpreting raw float bytes as int64
-let hiPre = numberToBigint64(c103);
-let loPre = numberToBigint64(c51x3);
-let c52n = numberToBigint64(c52);
-let c51n = numberToBigint64(c51);
-
-// or just mask out everything but the 52 mantissa bits
-let mask51 = (1n << 51n) - 1n;
-let mask64 = (1n << 64n) - 1n;
 
 // modmul with 5 x 51-bit limbs
 let Fp = createField(pallasParams.modulus);
@@ -127,30 +109,6 @@ function montmul(x: bigint, y: bigint) {
     Z[5] = 0n;
   }
   return bigintFromLimbs(Z, 51, 5);
-}
-
-function int64ToFloat52(x: bigint) {
-  return bigint64ToNumber(x | c51n) - c51;
-}
-function float52ToInt64(x: number) {
-  return numberToBigint64(x + c51) & mask51;
-}
-
-// store a limb vector of float64s
-function bigintToFloat51Limbs(x: bigint) {
-  let limbs = bigintToLimbsRelaxed(x, 51, 5);
-  let floats = new Float64Array(5);
-  for (let i = 0; i < 5; i++) {
-    floats[i] = int64ToFloat52(limbs[i]);
-  }
-  return floats;
-}
-function bigintFromFloat51Limbs(x: Float64Array) {
-  let limbs = new BigUint64Array(5);
-  for (let i = 0; i < 5; i++) {
-    limbs[i] = float52ToInt64(x[i]);
-  }
-  return bigintFromLimbs(limbs, 51, 5);
 }
 
 let PF = bigintToFloat51Limbs(p);

@@ -1,17 +1,12 @@
 import { call, func, i32, importMemory, Module } from "wasmati";
 import { MemoryHelpers, memoryHelpers } from "../wasm/memory-helpers.js";
 import { Tuple } from "../types.js";
-import { float52ToInt64, numberToBigint64 } from "./fma-js.js";
+import { float52ToInt64, mask51, c51, c51n } from "./common.js";
 import { Multiply } from "./fma.js";
 import { assert } from "../util.js";
 import { forLoop1 } from "../wasm/wasm-util.js";
 
 export { createWasm, createWasmWithBenches, Field };
-
-// constants
-let mask51 = (1n << 51n) - 1n;
-let c51 = 2 ** 52;
-let c51n = numberToBigint64(c51);
 
 let sizeField = 8 * 5;
 let sizeFieldPair = 2 * sizeField;

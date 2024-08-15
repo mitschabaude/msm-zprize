@@ -24,7 +24,6 @@ import {
   type Func,
 } from "wasmati";
 import { inverse } from "../bigint/field.js";
-import { bigintToFloat51Limbs } from "./fma-js.js";
 import {
   c103,
   c2,
@@ -36,7 +35,8 @@ import {
   loPre,
   mask51,
   mask64,
-} from "./constants.js";
+  bigintToFloat51Limbs,
+} from "./common.js";
 
 export { Multiply };
 
