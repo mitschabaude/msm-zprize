@@ -19,24 +19,15 @@ import {
   i64,
   i64x2,
   importFunc,
-  importMemory,
   local,
-  Module,
   v128,
+  type Func,
 } from "wasmati";
-import { assertDeepEqual } from "../testing/nested.js";
 import { pallasParams } from "../concrete/pasta.params.js";
 import { createField, inverse } from "../bigint/field.js";
-import { Random } from "../testing/random.js";
-import { memoryHelpers } from "../wasm/memory-helpers.js";
-import { createEquivalentWasm, wasmSpec } from "../testing/equivalent-wasm.js";
-import { Tuple } from "../types.js";
-import {
-  bigintToFloat51Limbs,
-  float52ToInt64,
-  montMulFmaWrapped,
-  numberToBigint64,
-} from "./fma-js.js";
+import { bigintToFloat51Limbs, numberToBigint64 } from "./fma-js.js";
+
+export { multiplyWasm };
 
 // constants
 let mask51 = (1n << 51n) - 1n;
@@ -70,28 +61,13 @@ function constI64x2(x: bigint) {
   return v128.const("i64x2", [x, x]);
 }
 
-let log = (...args: any) => console.log("wasm", ...args);
-let logI64 = importFunc({ in: [i32, i64], out: [] }, log);
-let logF64 = importFunc({ in: [i32, f64], out: [] }, log);
-let logF64x2_0 = func({ in: [i32, v128], out: [] }, ([i, x]) => {
-  local.get(x);
-  f64x2.extract_lane(0);
-  call(logF64, [i, $]);
-});
-let logI64x2_0 = func({ in: [i32, v128], out: [] }, ([i, x]) => {
-  local.get(x);
-  i64x2.extract_lane(0);
-  call(logI64, [i, $]);
-});
-
 // TODO constants that need to be parameters
 let Fp = createField(pallasParams.modulus);
 let p = Fp.modulus;
 let pInv = inverse(-p, 1n << 51n);
-let R = Fp.mod(1n << 255n);
 let PF = bigintToFloat51Limbs(p);
 
-let multiplyWasm = func(
+let multiplyWasm: Func<["i32", "i32", "i32"], []> = func(
   {
     in: [i32, i32, i32], // pointers to z, x, y, where z = x * y
     out: [],
@@ -190,144 +166,17 @@ let multiplyWasm = func(
   }
 );
 
-let wasmMemory = importMemory({ min: 1000, max: 1000, shared: true });
-let multiplyModule = Module({
-  memory: wasmMemory,
-  exports: { multiply: multiplyWasm },
+// debugging helpers, currently unused
+let log = (...args: any) => console.log("wasm", ...args);
+let logI64 = importFunc({ in: [i32, i64], out: [] }, log);
+let logF64 = importFunc({ in: [i32, f64], out: [] }, log);
+let logF64x2_0 = func({ in: [i32, v128], out: [] }, ([i, x]) => {
+  local.get(x);
+  f64x2.extract_lane(0);
+  call(logF64, [i, $]);
 });
-let { instance: mulInstance } = await multiplyModule.instantiate();
-let sizeField = 8 * 5;
-let sizeFieldPair = 2 * sizeField;
-
-const Memory = memoryHelpers(p, 51, 5, { memory: wasmMemory.value });
-const memory = Memory.memoryBytes;
-
-const Field = {
-  multiply: mulInstance.exports.multiply,
-  size: sizeFieldPair,
-
-  copy(x: number, y: number) {
-    memory.copyWithin(x, y, y + sizeFieldPair);
-  },
-
-  writeBigintPair(x: number, x0: bigint, x1: bigint) {
-    let view = new DataView(memory.buffer, x, sizeFieldPair);
-
-    for (let offset = 0; offset < sizeFieldPair; offset += 16) {
-      // we write each limb of x0 and x1 next to each other, as one v128
-      view.setBigInt64(offset, (x0 & mask51) | c51n, true);
-      let x0F = view.getFloat64(offset, true);
-      view.setFloat64(offset, x0F - c51, true);
-
-      view.setBigInt64(offset + 8, (x1 & mask51) | c51n, true);
-      let x1F = view.getFloat64(offset + 8, true);
-      view.setFloat64(offset + 8, x1F - c51, true);
-
-      x0 >>= 51n;
-      x1 >>= 51n;
-    }
-  },
-  // writes only one half of a pair and leaves the other as is
-  writeBigint(x: number, x0: bigint) {
-    let view = new DataView(memory.buffer, x, sizeFieldPair);
-
-    for (let offset = 0; offset < sizeFieldPair; offset += 16) {
-      view.setBigInt64(offset, (x0 & mask51) | c51n, true);
-      let x0F = view.getFloat64(offset, true);
-      view.setFloat64(offset, x0F - c51, true);
-      x0 >>= 51n;
-    }
-  },
-
-  readBigintPair(x: number) {
-    let view = new DataView(memory.buffer, x, sizeFieldPair);
-    let x0 = 0n;
-    let x1 = 0n;
-
-    for (let offset = sizeFieldPair - 16; offset >= 0; offset -= 16) {
-      let x0F = view.getFloat64(offset, true);
-      x0 = (x0 << 51n) | float52ToInt64(x0F);
-
-      let x1F = view.getFloat64(offset + 8, true);
-      x1 = (x1 << 51n) | float52ToInt64(x1F);
-    }
-    return [x0, x1] satisfies Tuple;
-  },
-  readBigint(x: number) {
-    let view = new DataView(memory.buffer, x, sizeFieldPair);
-    let x0 = 0n;
-    for (let offset = sizeFieldPair - 16; offset >= 0; offset -= 16) {
-      let x0F = view.getFloat64(offset, true);
-      x0 = (x0 << 51n) | float52ToInt64(x0F);
-    }
-    return x0;
-  },
-};
-
-// manual simple test
-{
-  let x = Memory.local.getPointer(sizeFieldPair);
-  let y = Memory.local.getPointer(sizeFieldPair);
-  let z = Memory.local.getPointer(sizeFieldPair);
-
-  Field.writeBigintPair(x, 1n, 1n);
-  Field.writeBigintPair(y, R, 1n);
-  Field.multiply(z, x, y);
-
-  let [z00, z01] = Field.readBigintPair(z);
-  let z10 = montMulFmaWrapped(1n, R);
-  let z11 = montMulFmaWrapped(1n, 1n);
-
-  assertDeepEqual(z00, z10, "montmul wasm 1");
-  assertDeepEqual(z01, z11, "montmul wasm 2");
-}
-
-// property tests
-
-let eqivalentWasm = createEquivalentWasm(Memory, { logSuccess: true });
-let fieldRng = Random.field(p);
-
-let field = wasmSpec(Memory, fieldRng, {
-  size: Field.size,
-  there: Field.writeBigint,
-  back: Field.readBigint,
+let logI64x2_0 = func({ in: [i32, v128], out: [] }, ([i, x]) => {
+  local.get(x);
+  i64x2.extract_lane(0);
+  call(logI64, [i, $]);
 });
-
-let fieldPair = wasmSpec(Memory, Random.tuple([fieldRng, fieldRng]), {
-  size: Field.size,
-  there: (xPtr, [x0, x1]) => Field.writeBigintPair(xPtr, x0, x1),
-  back: Field.readBigintPair,
-});
-
-eqivalentWasm(
-  { from: [field], to: field },
-  (x) => x,
-  Field.copy,
-  "wasm roundtrip"
-);
-
-eqivalentWasm(
-  { from: [fieldPair], to: fieldPair },
-  (x) => x,
-  Field.copy,
-  "wasm roundtrip pair"
-);
-
-// wasm version is exactly equivalent to montmulFma
-
-eqivalentWasm(
-  { from: [field, field], to: field },
-  montMulFmaWrapped,
-  Field.multiply,
-  "montmul fma (wasm)"
-);
-
-eqivalentWasm(
-  { from: [fieldPair, fieldPair], to: fieldPair },
-  (x, y): [bigint, bigint] => [
-    montMulFmaWrapped(x[0], y[0]),
-    montMulFmaWrapped(x[1], y[1]),
-  ],
-  Field.multiply,
-  "montmul fma pairwise"
-);
