@@ -13,7 +13,7 @@ import { assertDeepEqual } from "../testing/nested.js";
 import { pallasParams } from "../concrete/pasta.params.js";
 import { Random } from "../testing/random.js";
 import { createEquivalentWasm, wasmSpec } from "../testing/equivalent-wasm.js";
-import { montMulFmaWrapped, montmulSimple } from "./fma-js.js";
+import { montMulFmaWrapped } from "./fma-js.js";
 import { Field } from "./field.js";
 import { writeWat } from "../wasm/wat-helpers.js";
 
@@ -134,4 +134,23 @@ eqivalentWasm(
   ],
   Fp.Wasm.multiplyReduce,
   "mul reduce pairwise"
+);
+
+// it's still equivalent when we do 1000 squarings in a row
+
+eqivalentWasm(
+  { from: [field], to: field },
+  (x) => {
+    for (let i = 0; i < 1000; i++) {
+      x = montmulReduce(x, x);
+    }
+    return x;
+  },
+  (z, x) => {
+    for (let i = 0; i < 1000; i++) {
+      Fp.Wasm.multiplyReduce(x, x, x);
+    }
+    Fp.copy(z, x);
+  },
+  "mul reduce pairwise 1000"
 );

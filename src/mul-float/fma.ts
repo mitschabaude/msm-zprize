@@ -155,13 +155,13 @@ function Multiply(
         local.set(Z[4]);
       }
 
-      // propagate carries (to make limbs positive)
-      carryLocals(Z);
-
       if (options?.reduce) {
         Arith.reduceLaneLocals(0, Z, carry);
         Arith.reduceLaneLocals(1, Z, carry);
       }
+
+      // propagate carries (to make limbs positive)
+      carryLocals(Z);
 
       // convert to f64, store in memory
       for (let i = 0; i < 5; i++) {

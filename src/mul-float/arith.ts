@@ -60,6 +60,8 @@ function arithmetic(p: bigint, pSelectPtr: Global<i32>) {
    *
    * This only reduces inputs < 2p to < (p4 + 1) * 2^(4 * 51), not < p,
    * but that's enough for multiplication to map back to < 2p
+   *
+   * Also, this does not perform a carry!
    */
   function reduceLaneLocals(lane: 0 | 1, X: Local<v128>[], tmp: Local<v128>) {
     block(null, ($outer) => {
@@ -71,20 +73,9 @@ function arithmetic(p: bigint, pSelectPtr: Global<i32>) {
       br_if($outer);
 
       // if we're here, x > p but, by assumption, x < 2p, so do x - p
-      local.set(tmp, constI64x2(0n));
       Field.forEach((i) => {
-        // (carry, x[i]) = x[i] - p[i] + carry;
-        local.get(X[i]);
-        if (i > 0) i64x2.add(); // add the carry
         v128.const("i64x2", lane === 0 ? [PI[i], 0n] : [0n, PI[i]]);
-        i64x2.sub();
-        if (i < 4) {
-          local.tee(tmp);
-          i64x2.shr_s($, 51); // carry, left on the stack
-          local.set(X[i], v128.and(tmp, constI64x2(mask51)));
-        } else {
-          local.set(X[i], v128.and($, constI64x2(mask51)));
-        }
+        local.set(X[i], i64x2.sub(X[i], $));
       });
     });
   }
