@@ -38,7 +38,7 @@ import {
   bigintToFloat51Limbs,
 } from "./common.js";
 import { constF64x2, constI64x2 } from "./field-base.js";
-import { arithmetic } from "./arith.js";
+import { arithmetic, carryLocals } from "./arith.js";
 
 export { Multiply };
 
@@ -152,20 +152,11 @@ function Multiply(p: bigint, options?: { reduce?: boolean }): Multiply {
       }
 
       // propagate carries (to make limbs positive)
-      local.set(carry, constI64x2(0n));
-      for (let i = 0; i < 5; i++) {
-        i64x2.add(Z[i], carry);
-        if (i < 4) {
-          local.tee(Z[i]);
-          local.set(carry, i64x2.shr_s($, 51));
-          local.set(Z[i], v128.and(Z[i], constI64x2(mask51)));
-        } else {
-          local.set(Z[i], v128.and($, constI64x2(mask51)));
-        }
-      }
+      carryLocals(Z);
+
       if (options?.reduce) {
-        Arith.i64x2.reduceLaneLocals(0, Z, tmp, carry);
-        Arith.i64x2.reduceLaneLocals(1, Z, tmp, carry);
+        Arith.i64x2.fullyReduceLaneLocals(0, Z, tmp, carry);
+        Arith.i64x2.fullyReduceLaneLocals(1, Z, tmp, carry);
       }
 
       // convert to f64, store in memory

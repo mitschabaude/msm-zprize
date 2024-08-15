@@ -26,11 +26,22 @@ import { createWasmWithBenches } from "../../src/mul-float/field.js";
 
 export { benchmark };
 
-async function benchmark({ p, t }: { p: bigint; t: bigint }, doWrite = false) {
+async function benchmark(
+  { p, t }: { p: bigint; t: bigint },
+  { doWrite = false, onlyQuick = false } = {}
+) {
   let { randomField, randomFieldx2 } = randomGenerators(p);
   let N = 1e7;
   let Ninv = 5e5;
   let Npow = 5e4;
+
+  if (p < 1n << 255n) {
+    let Fp = await createWasmWithBenches(p);
+    let x = Fp.Memory.local.getPointer(Fp.size);
+    Fp.writePair(x, randomField(), randomField());
+    bench("multiply 51x5", Fp.Wasm.benchMultiply, { x, N }, 2);
+    bench("multiply 51x5", Fp.Wasm.benchMultiply, { x, N }, 2);
+  }
 
   for (let w of [29]) {
     let { n } = montgomeryParams(p, w);
@@ -144,9 +155,6 @@ async function benchmark({ p, t }: { p: bigint; t: bigint }, doWrite = false) {
       return x;
     }
 
-    let has51 = p < 1n << 255n;
-    let Field51 = has51 ? await createWasmWithBenches(p) : undefined;
-
     let constants = createConstants(helpers, {
       zero: 0n,
       mg1: mod(1n * Field.R, p),
@@ -187,15 +195,10 @@ async function benchmark({ p, t }: { p: bigint; t: bigint }, doWrite = false) {
     bench("multiply schoolbook", wasm.benchSchoolbook, { x, N });
     bench("multiply square", wasm.benchSquare, { x, N });
 
-    if (has51) {
-      let Fp = Field51!;
-      let x = Fp.Memory.local.getPointer(Fp.size);
-      Fp.writePair(x, randomField(), randomField());
-      bench("multiply 51x5", Fp.Wasm.benchMultiply, { x, N }, 2);
-    }
-
     // bench("multiply bigint", benchMultiplyBigint, { x, N });
     bench("add", wasm.benchAdd, { x, N }, 3);
+
+    if (onlyQuick) continue;
 
     writeBigint(x, randomFieldx2());
     writeBigint(y, randomFieldx2());

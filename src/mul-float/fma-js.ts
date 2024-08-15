@@ -158,6 +158,7 @@ function montmulFma(X: Float64Array, Y: Float64Array) {
     }
     Z[4] = zInitial[5 + i] + carry;
   }
+  assert(Z[4] >= 0, `negative top limb ${Z[4]}`);
 
   // propagate carries to make limbs positive
   // not sure this is needed

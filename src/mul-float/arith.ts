@@ -20,7 +20,6 @@ import {
   f64x2,
   type Func,
   type Input,
-  br,
 } from "wasmati";
 import {
   Field,
@@ -31,7 +30,7 @@ import {
 } from "./field-base.js";
 import { mask51 } from "./common.js";
 
-export { arithmetic, fieldHelpers, FieldWithArithmetic };
+export { carryLocals, arithmetic, fieldHelpers, FieldWithArithmetic };
 
 type FieldWithArithmetic = ReturnType<typeof FieldWithArithmetic>;
 
@@ -39,6 +38,18 @@ function FieldWithArithmetic(p: bigint) {
   const arithmetic_ = arithmetic(p);
   const helper_ = fieldHelpers(p);
   return { ...arithmetic_, ...helper_ };
+}
+
+function carryLocals(Z: Local<v128>[]) {
+  local.set(Z[1], i64x2.add(Z[1], i64x2.shr_s(Z[0], 51)));
+  local.set(Z[2], i64x2.add(Z[2], i64x2.shr_s(Z[1], 51)));
+  local.set(Z[3], i64x2.add(Z[3], i64x2.shr_s(Z[2], 51)));
+  local.set(Z[4], i64x2.add(Z[4], i64x2.shr_s(Z[3], 51)));
+
+  local.set(Z[0], v128.and(Z[0], constI64x2(mask51)));
+  local.set(Z[1], v128.and(Z[1], constI64x2(mask51)));
+  local.set(Z[2], v128.and(Z[2], constI64x2(mask51)));
+  local.set(Z[3], v128.and(Z[3], constI64x2(mask51)));
 }
 
 // TODO most of this doesn't work
@@ -51,7 +62,7 @@ function arithmetic(p: bigint) {
   let PI = constants.i64x2.P;
   let PF = constants.f64x2.P;
 
-  function reduceLaneI(lane: 0 | 1, x: Local<i32>, xi: Local<i64>) {
+  function fullyReduceLane(lane: 0 | 1, x: Local<i32>, xi: Local<i64>) {
     block(null, ($outer) => {
       // check if x < p
       block(null, ($inner) => {
@@ -82,7 +93,7 @@ function arithmetic(p: bigint) {
   /**
    * Reduce lane in i64 arithmetic, assuming all limbs are positive
    */
-  function reduceLaneLocals(
+  function fullyReduceLaneLocals(
     lane: 0 | 1,
     X: Local<v128>[],
     xi: Local<i64>,
@@ -127,10 +138,13 @@ function arithmetic(p: bigint) {
    * reduce in place from < 2*p to < p, i.e.
    * if (x > p) x -= p
    */
-  const reduceI = func({ in: [i32], locals: [i64], out: [] }, ([x], [xi]) => {
-    reduceLaneI(0, x, xi);
-    reduceLaneI(1, x, xi);
-  });
+  const fullyReduce = func(
+    { in: [i32], locals: [i64], out: [] },
+    ([x], [xi]) => {
+      fullyReduceLane(0, x, xi);
+      fullyReduceLane(1, x, xi);
+    }
+  );
 
   const additionFNoCarry = func(
     { in: [i32, i32, i32], out: [] },
@@ -146,9 +160,9 @@ function arithmetic(p: bigint) {
 
   return {
     i64x2: {
-      reduce: reduceI,
-      reduceLane: reduceLaneI,
-      reduceLaneLocals: reduceLaneLocals,
+      fullyReduce,
+      fullyReduceLane,
+      fullyReduceLaneLocals,
     },
     f64x2: {
       addNoCarry: additionFNoCarry,

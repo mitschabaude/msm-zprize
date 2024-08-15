@@ -12,7 +12,8 @@ let sizeField = 8 * 5;
 let sizeFieldPair = 2 * sizeField;
 
 function validateAssumptions(modulus: bigint) {
-  assert(modulus < 1n << 255n);
+  // slightly stronger than p < 2^255, we need some wiggle room to be able to not fully reduce
+  assert(modulus + (1n << 206n) < 1n << 255n);
 }
 
 type WasmIntf = {
