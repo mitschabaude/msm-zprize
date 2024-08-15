@@ -191,7 +191,7 @@ async function benchmark({ p, t }: { p: bigint; t: bigint }, doWrite = false) {
       let Fp = Field51!;
       let x = Fp.Memory.local.getPointer(Fp.size);
       Fp.writePair(x, randomField(), randomField());
-      bench("multiply 51x5", Field51?.Wasm.benchMultiply!, { x, N }, 2);
+      bench("multiply 51x5", Fp.Wasm.benchMultiply, { x, N }, 2);
     }
 
     // bench("multiply bigint", benchMultiplyBigint, { x, N });

@@ -24,29 +24,25 @@ import {
   type Func,
 } from "wasmati";
 import { inverse } from "../bigint/field.js";
-import { bigintToFloat51Limbs, numberToBigint64 } from "./fma-js.js";
+import { bigintToFloat51Limbs } from "./fma-js.js";
+import {
+  c103,
+  c2,
+  c51,
+  c51n,
+  c52,
+  c52n,
+  hiPre,
+  loPre,
+  mask51,
+  mask64,
+} from "./constants.js";
 
 export { Multiply };
 
 type Multiply = {
   multiply: Func<["i32", "i32", "i32"], []>;
 };
-
-// constants
-let mask51 = (1n << 51n) - 1n;
-let mask64 = (1n << 64n) - 1n;
-
-let c103 = 2 ** 103;
-let c52 = 2 ** 52;
-let c51 = 2 ** 52;
-let c51x3 = 3 * 2 ** 51;
-let c2 = c103 + c51x3;
-
-// constants we have to subtract after reinterpreting raw float bytes as int64
-let hiPre = numberToBigint64(c103);
-let loPre = numberToBigint64(c51x3);
-let c52n = numberToBigint64(c52);
-let c51n = numberToBigint64(c51);
 
 let zInitial = new BigInt64Array(11);
 let loCount = [1n, 2n, 3n, 4n, 5n, 4n, 3n, 2n, 1n, 0n, 0n];
