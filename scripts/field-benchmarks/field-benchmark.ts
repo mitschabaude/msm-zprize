@@ -22,11 +22,12 @@ import {
   randomBytes,
 } from "../../src/util.js";
 import { randomGenerators } from "../../src/bigint/field-random.js";
+import { createWasmWithBenches } from "../../src/mul-float/field.js";
 
 export { benchmark };
 
 async function benchmark({ p, t }: { p: bigint; t: bigint }, doWrite = false) {
-  let { randomFieldx2 } = randomGenerators(p);
+  let { randomField, randomFieldx2 } = randomGenerators(p);
   let N = 1e7;
   let Ninv = 5e5;
   let Npow = 5e4;
@@ -143,6 +144,9 @@ async function benchmark({ p, t }: { p: bigint; t: bigint }, doWrite = false) {
       return x;
     }
 
+    let has51 = p < 1n << 255n;
+    let Field51 = has51 ? await createWasmWithBenches(p) : undefined;
+
     let constants = createConstants(helpers, {
       zero: 0n,
       mg1: mod(1n * Field.R, p),
@@ -182,8 +186,16 @@ async function benchmark({ p, t }: { p: bigint; t: bigint }, doWrite = false) {
     bench("multiply barrett", wasm.benchBarrett, { x, N });
     bench("multiply schoolbook", wasm.benchSchoolbook, { x, N });
     bench("multiply square", wasm.benchSquare, { x, N });
+
+    if (has51) {
+      let Fp = Field51!;
+      let x = Fp.Memory.local.getPointer(Fp.size);
+      Fp.writePair(x, randomField(), randomField());
+      bench("multiply 51x5", Field51?.Wasm.benchMultiply!, { x, N }, 2);
+    }
+
     // bench("multiply bigint", benchMultiplyBigint, { x, N });
-    bench("add x3", wasm.benchAdd, { x, N });
+    bench("add", wasm.benchAdd, { x, N }, 3);
 
     writeBigint(x, randomFieldx2());
     writeBigint(y, randomFieldx2());
@@ -266,11 +278,16 @@ async function benchmark({ p, t }: { p: bigint; t: bigint }, doWrite = false) {
 function bench(
   name: string,
   compute: (x: number, N: number) => void,
-  { x, N }: { x: number; N: number }
+  { x, N }: { x: number; N: number },
+  /**
+   * parameter to use if the operation is performed multiple times
+   */
+  scale = 1
 ) {
+  let Nscaled = Math.round(N / scale);
   name = name.padEnd(20, " ");
   tic();
-  compute(x, N);
+  compute(x, Nscaled);
   let time = toc();
   console.log(`${name} \t ${(N / time / 1e3).toFixed(1).padStart(4)}M ops/s`);
   console.log(`${name} \t ${((time / N) * 1e6).toFixed(0)}ns`);

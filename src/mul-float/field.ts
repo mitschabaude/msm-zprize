@@ -1,11 +1,12 @@
-import { importMemory, Module } from "wasmati";
+import { call, func, i32, importMemory, Module } from "wasmati";
 import { MemoryHelpers, memoryHelpers } from "../wasm/memory-helpers.js";
 import { Tuple } from "../types.js";
 import { float52ToInt64, numberToBigint64 } from "./fma-js.js";
 import { Multiply } from "./fma.js";
 import { assert } from "../util.js";
+import { forLoop1 } from "../wasm/wasm-util.js";
 
-export { createFieldWasm, Field };
+export { createWasm, createWasmWithBenches, Field };
 
 // constants
 let mask51 = (1n << 51n) - 1n;
@@ -19,8 +20,12 @@ function validateAssumptions(modulus: bigint) {
   assert(modulus < 1n << 255n);
 }
 
-async function createFieldWasm(p: bigint) {
-  let wasmMemory = importMemory({ min: 1000, max: 1000, shared: true });
+type WasmIntf = {
+  multiply: (z: number, x: number, y: number) => void;
+};
+
+async function createWasm(p: bigint, memSize = 1 << 16) {
+  let wasmMemory = importMemory({ min: memSize, max: memSize, shared: true });
   let multiplyModule = Module({
     memory: wasmMemory,
     exports: { multiply: Multiply(p).multiply },
@@ -30,28 +35,24 @@ async function createFieldWasm(p: bigint) {
   const Memory = memoryHelpers(p, 51, 5, { memory: wasmMemory.value });
   const memory = Memory.memoryBytes;
 
-  return new Field(p, memory, instance.exports, Memory);
+  return new Field<WasmIntf>(p, memory, instance.exports, Memory);
 }
 
-type WasmIntf = {
-  multiply: (z: number, x: number, y: number) => void;
-};
-
-class Field {
+class Field<Wasm> {
   size = sizeFieldPair;
   static size = sizeFieldPair;
 
   constructor(
     public modulus: bigint,
     public memory: Uint8Array,
-    public Wasm: WasmIntf,
+    public Wasm: Wasm,
     public Memory: MemoryHelpers
   ) {
     validateAssumptions(modulus);
   }
 
   static create(p: bigint) {
-    return createFieldWasm(p);
+    return createWasm(p);
   }
 
   copy(x: number, y: number) {
@@ -120,4 +121,36 @@ class Field {
   readSecond(x: number) {
     return this.read(x + 8);
   }
+}
+
+// version with benchmark scripts
+
+type WasmIntfWithBenches = WasmIntf & {
+  benchMultiply: (x: number, N: number) => void;
+};
+
+async function createWasmWithBenches(p: bigint) {
+  let wasmMemory = importMemory({ min: 100, max: 100 });
+
+  let { multiply } = Multiply(p);
+
+  const benchMultiply = func(
+    { in: [i32, i32], locals: [i32], out: [] },
+    ([x, N], [i]) => {
+      forLoop1(i, 0, N, () => {
+        call(multiply, [x, x, x]);
+      });
+    }
+  );
+
+  let multiplyModule = Module({
+    memory: wasmMemory,
+    exports: { multiply, benchMultiply },
+  });
+  let { instance } = await multiplyModule.instantiate();
+
+  const Memory = memoryHelpers(p, 51, 5, { memory: wasmMemory.value });
+  const memory = Memory.memoryBytes;
+
+  return new Field<WasmIntfWithBenches>(p, memory, instance.exports, Memory);
 }
