@@ -28,6 +28,7 @@ export {
   F64x2,
   i64x2Constants,
   f64x2Constants,
+  bigintPairToData,
 };
 
 function constF64x2(x: number) {
@@ -40,6 +41,7 @@ function constI64x2(x: bigint) {
 // inline methods to operate on a field element stored as n * w-bit limbs
 
 const n = 5;
+const sizePair = 16 * n;
 
 function loadLimb(x: Local<i32>, i: number) {
   assert(i >= 0, "positive index");
@@ -70,6 +72,19 @@ function store(x: Local<i32>, X: Input<v128>[]) {
   for (let i = 0; i < n; i++) {
     v128.store({ offset: 16 * i }, x, X[i]);
   }
+}
+
+function bigintPairToData(x0: bigint, x1: bigint) {
+  let bytes = new Uint8Array(sizePair);
+  let view = new DataView(bytes.buffer);
+
+  for (let offset = 0; offset < sizePair; offset += 16) {
+    view.setBigInt64(offset, x0 & mask51, true);
+    view.setBigInt64(offset + 8, x1 & mask51, true);
+    x0 >>= 51n;
+    x1 >>= 51n;
+  }
+  return [...bytes];
 }
 
 const I64x2 = {

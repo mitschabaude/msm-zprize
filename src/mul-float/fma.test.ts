@@ -15,12 +15,22 @@ import { Random } from "../testing/random.js";
 import { createEquivalentWasm, wasmSpec } from "../testing/equivalent-wasm.js";
 import { montMulFmaWrapped, montmulSimple } from "./fma-js.js";
 import { Field } from "./field.js";
+import { writeWat } from "../wasm/wat-helpers.js";
+
+const doWrite = true;
 
 let p = pallasParams.modulus;
 let R = (1n << 255n) % p;
 
 const Fp = await Field.create(p);
 let Local = Fp.Memory.local;
+
+if (doWrite && Fp.moduleBytes) {
+  await writeWat(
+    import.meta.url.slice(7).replace(".ts", ".wat").replace(".js", ".wat"),
+    Fp.moduleBytes
+  );
+}
 
 // manual simple test
 {
@@ -99,11 +109,19 @@ eqivalentWasm(
   "mul fma pairwise"
 );
 
-// when reducing, wasm version is exactly equivalent to montmulSimple
+// when reducing, wasm version is exactly equivalent to montMulFmaWrapped
+// followed by a conditional reduction that's slightly weaker than reducing to < p
+
+function reduce(x: bigint) {
+  return x >> 204n <= p >> 204n ? x : x - p;
+}
+function montmulReduce(x: bigint, y: bigint) {
+  return reduce(montMulFmaWrapped(x, y));
+}
 
 eqivalentWasm(
   { from: [field, field], to: field },
-  montmulSimple,
+  montmulReduce,
   Fp.Wasm.multiplyReduce,
   "mul reduce"
 );
@@ -111,8 +129,8 @@ eqivalentWasm(
 eqivalentWasm(
   { from: [fieldPair, fieldPair], to: fieldPair },
   (x, y): [bigint, bigint] => [
-    montmulSimple(x[0], y[0]),
-    montmulSimple(x[1], y[1]),
+    montmulReduce(x[0], y[0]),
+    montmulReduce(x[1], y[1]),
   ],
   Fp.Wasm.multiplyReduce,
   "mul reduce pairwise"

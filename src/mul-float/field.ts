@@ -1,10 +1,11 @@
-import { call, func, i32, importMemory, Module } from "wasmati";
+import { call, func, i32, importFunc, importMemory, Module } from "wasmati";
 import { MemoryHelpers, memoryHelpers } from "../wasm/memory-helpers.js";
 import { Tuple } from "../types.js";
 import { float52ToInt64, mask51, c51, c51n } from "./common.js";
 import { Multiply } from "./fma.js";
 import { assert } from "../util.js";
-import { forLoop1 } from "../wasm/wasm-util.js";
+import { forLoop1, ImplicitMemory } from "../wasm/wasm-util.js";
+import { bigintPairToData } from "./field-base.js";
 
 export { createWasm, createWasmWithBenches, Field };
 
@@ -21,22 +22,53 @@ type WasmIntf = {
   multiplyReduce: (z: number, x: number, y: number) => void;
 };
 
-async function createWasm(p: bigint, memSize = 1 << 16) {
+async function createWasm(p: bigint, { memSize = 1 << 16 } = {}) {
   let wasmMemory = importMemory({ min: memSize, max: memSize, shared: true });
+  let implicitMemory = new ImplicitMemory(wasmMemory);
+  let pSelectPtr = pSelect(p, implicitMemory);
 
-  let { multiply } = Multiply(p);
-  let { multiply: multiplyReduce } = Multiply(p, { reduce: true });
+  let { multiply } = Multiply(p, pSelectPtr);
+  let { multiply: multiplyReduce } = Multiply(p, pSelectPtr, { reduce: true });
+
+  let log = importFunc({ in: [i32], out: [] }, (x: number) =>
+    console.log("hello", x)
+  );
+
+  let start = func({ in: [], out: [] }, () => {
+    call(log, [pSelectPtr]);
+    call(log, [i32.load8_u({ offset: 0 }, pSelectPtr)]);
+    call(log, [i32.load8_u({ offset: 1 }, pSelectPtr)]);
+    call(log, [i32.load8_u({ offset: 2 }, pSelectPtr)]);
+    call(log, [i32.load8_u({ offset: 3 }, pSelectPtr)]);
+  });
 
   let multiplyModule = Module({
     memory: wasmMemory,
-    exports: { multiply, multiplyReduce },
+    exports: { multiply, multiplyReduce, ...implicitMemory.getExports() },
+    start,
   });
   let { instance } = await multiplyModule.instantiate();
 
   const Memory = memoryHelpers(p, 51, 5, { memory: wasmMemory.value });
   const memory = Memory.memoryBytes;
 
-  return new Field<WasmIntf>(p, memory, instance.exports, Memory);
+  return new Field<WasmIntf>(
+    p,
+    memory,
+    instance.exports,
+    Memory,
+    multiplyModule.toBytes()
+  );
+}
+
+function pSelect(p: bigint, implicitMemory: ImplicitMemory) {
+  let p00 = implicitMemory.dataToOffset(bigintPairToData(0n, 0n));
+  let p10 = implicitMemory.dataToOffset(bigintPairToData(p, 0n));
+  let p01 = implicitMemory.dataToOffset(bigintPairToData(0n, p));
+  let p11 = implicitMemory.dataToOffset(bigintPairToData(p, p));
+  let pSelect = [p00, p10, p01, p11];
+  pSelect.forEach((p) => assert(p < 256));
+  return implicitMemory.data(pSelect);
 }
 
 class Field<Wasm> {
@@ -47,7 +79,8 @@ class Field<Wasm> {
     public modulus: bigint,
     public memory: Uint8Array,
     public Wasm: Wasm,
-    public Memory: MemoryHelpers
+    public Memory: MemoryHelpers,
+    public moduleBytes?: Uint8Array
   ) {
     validateAssumptions(modulus);
   }
@@ -132,8 +165,10 @@ type WasmIntfWithBenches = {
 
 async function createWasmWithBenches(p: bigint) {
   let wasmMemory = importMemory({ min: 100, max: 100 });
+  let implicitMemory = new ImplicitMemory(wasmMemory);
+  let pSelectPtr = pSelect(p, implicitMemory);
 
-  let { multiply } = Multiply(p, { reduce: true });
+  let { multiply } = Multiply(p, pSelectPtr, { reduce: true });
 
   const benchMultiply = func(
     { in: [i32, i32], locals: [i32], out: [] },

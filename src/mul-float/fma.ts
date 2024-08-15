@@ -21,6 +21,7 @@ import {
   importFunc,
   local,
   v128,
+  Global,
   type Func,
 } from "wasmati";
 import { inverse } from "../bigint/field.js";
@@ -55,11 +56,15 @@ for (let i = 0; i < 11; i++) {
 
 let nLocalsV128 = [v128, v128, v128, v128, v128] as const;
 
-function Multiply(p: bigint, options?: { reduce?: boolean }): Multiply {
+function Multiply(
+  p: bigint,
+  pSelectPtr: Global<i32>,
+  options?: { reduce?: boolean }
+): Multiply {
   let pInv = inverse(-p, 1n << 51n);
   let PF = bigintToFloat51Limbs(p);
 
-  let Arith = arithmetic(p);
+  let Arith = arithmetic(p, pSelectPtr);
 
   let multiply = func(
     {
@@ -73,12 +78,11 @@ function Multiply(p: bigint, options?: { reduce?: boolean }): Multiply {
         v128,
         v128,
         v128,
-        i64,
         ...nLocalsV128,
         ...nLocalsV128,
       ],
     },
-    ([z, x, y], [xi, qi, hi1, hi2, lo1, lo2, carry, tmp, ...rest]) => {
+    ([z, x, y], [xi, qi, hi1, hi2, lo1, lo2, carry, ...rest]) => {
       let Y = rest.slice(0, 5);
       let Z = rest.slice(5, 10);
 
@@ -155,8 +159,8 @@ function Multiply(p: bigint, options?: { reduce?: boolean }): Multiply {
       carryLocals(Z);
 
       if (options?.reduce) {
-        Arith.i64x2.fullyReduceLaneLocals(0, Z, tmp, carry);
-        Arith.i64x2.fullyReduceLaneLocals(1, Z, tmp, carry);
+        Arith.reduceLaneLocals(0, Z, carry);
+        Arith.reduceLaneLocals(1, Z, carry);
       }
 
       // convert to f64, store in memory
