@@ -21,6 +21,7 @@ import {
   Global,
   type Func,
   type Input,
+  i32x4,
 } from "wasmati";
 import {
   Field,
@@ -28,6 +29,7 @@ import {
   constI64x2,
   f64x2Constants,
   i64x2Constants,
+  loadLimb,
 } from "./field-base.js";
 import { mask51 } from "./common.js";
 
@@ -63,13 +65,13 @@ function arithmetic(p: bigint, pSelectPtr: Global<i32>) {
    *
    * Also, this does not perform a carry!
    */
-  function reduceLaneLocals(lane: 0 | 1, X: Local<v128>[], tmp: Local<v128>) {
+  function reduceLaneLocals(lane: 0 | 1, X: Local<v128>[]) {
     block(null, ($outer) => {
       // return if x4 <= p4
       // if not, x4 > p4 implies x > p
       local.get(X[4]);
       i64x2.extract_lane(lane);
-      i64.le_u($, PI[4]);
+      i64.le_s($, PI[4]);
       br_if($outer);
 
       // if we're here, x > p but, by assumption, x < 2p, so do x - p
@@ -77,6 +79,35 @@ function arithmetic(p: bigint, pSelectPtr: Global<i32>) {
         v128.const("i64x2", lane === 0 ? [PI[i], 0n] : [0n, PI[i]]);
         local.set(X[i], i64x2.sub(X[i], $));
       });
+    });
+  }
+
+  /**
+   * Like `reduceLaneLocals`, but reduces both lanes at the same time, by
+   * selecting a pointer that points to the right combination of p and 0 to subtract
+   *
+   * Not sure if this is more efficient, because we add memory reads
+   */
+  function reduceLocals(X: Local<v128>[], tmp: Local<v128>, pOr0: Local<i32>) {
+    // subtract 0 if x4 <= p4, and p if x4 > p4
+    local.tee(tmp, i64x2.le_s(X[4], constI64x2(PI[4])));
+    i32x4.extract_lane(0);
+    i32.mul($, 2);
+    local.get(tmp);
+    i32x4.extract_lane(2);
+    // now there are two int32s on the stack which are either -1 (if x4 <= p4) or 0
+    // use them to compute:
+    // (x=-1, y=-1) -> 0, (-1, 0) -> 1, (0, -1) -> 2, (0, 0) -> 3
+    // solution: 2(x + 1) + (y + 1) = 2x + y + 3
+    i32.add();
+    i32.add($, 3);
+    i32.load8_u({}, i32.add($, pSelectPtr));
+    local.set(pOr0);
+
+    // if we're here, x > p but, by assumption, x < 2p, so do x - p
+    Field.forEach((i) => {
+      loadLimb(pOr0, i);
+      local.set(X[i], i64x2.sub(X[i], $));
     });
   }
 
@@ -181,6 +212,7 @@ function arithmetic(p: bigint, pSelectPtr: Global<i32>) {
     fullyReduceLane,
     fullyReduceLaneLocals,
     reduceLaneLocals,
+    reduceLocals,
   };
 }
 

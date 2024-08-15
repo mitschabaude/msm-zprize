@@ -152,5 +152,5 @@ eqivalentWasm(
     }
     Fp.copy(z, x);
   },
-  "mul reduce pairwise 1000"
+  "mul reduce 1000"
 );

@@ -30,22 +30,9 @@ async function createWasm(p: bigint, { memSize = 1 << 16 } = {}) {
   let { multiply } = Multiply(p, pSelectPtr);
   let { multiply: multiplyReduce } = Multiply(p, pSelectPtr, { reduce: true });
 
-  let log = importFunc({ in: [i32], out: [] }, (x: number) =>
-    console.log("hello", x)
-  );
-
-  let start = func({ in: [], out: [] }, () => {
-    call(log, [pSelectPtr]);
-    call(log, [i32.load8_u({ offset: 0 }, pSelectPtr)]);
-    call(log, [i32.load8_u({ offset: 1 }, pSelectPtr)]);
-    call(log, [i32.load8_u({ offset: 2 }, pSelectPtr)]);
-    call(log, [i32.load8_u({ offset: 3 }, pSelectPtr)]);
-  });
-
   let multiplyModule = Module({
     memory: wasmMemory,
     exports: { multiply, multiplyReduce, ...implicitMemory.getExports() },
-    start,
   });
   let { instance } = await multiplyModule.instantiate();
 
@@ -63,10 +50,10 @@ async function createWasm(p: bigint, { memSize = 1 << 16 } = {}) {
 
 function pSelect(p: bigint, implicitMemory: ImplicitMemory) {
   let p00 = implicitMemory.dataToOffset(bigintPairToData(0n, 0n));
-  let p10 = implicitMemory.dataToOffset(bigintPairToData(p, 0n));
   let p01 = implicitMemory.dataToOffset(bigintPairToData(0n, p));
+  let p10 = implicitMemory.dataToOffset(bigintPairToData(p, 0n));
   let p11 = implicitMemory.dataToOffset(bigintPairToData(p, p));
-  let pSelect = [p00, p10, p01, p11];
+  let pSelect = [p00, p01, p10, p11];
   pSelect.forEach((p) => assert(p < 256));
   return implicitMemory.data(pSelect);
 }

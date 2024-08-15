@@ -78,11 +78,12 @@ function Multiply(
         v128,
         v128,
         v128,
+        i32,
         ...nLocalsV128,
         ...nLocalsV128,
       ],
     },
-    ([z, x, y], [xi, qi, hi1, hi2, lo1, lo2, carry, ...rest]) => {
+    ([z, x, y], [xi, qi, hi1, hi2, lo1, lo2, carry, idx, ...rest]) => {
       let Y = rest.slice(0, 5);
       let Z = rest.slice(5, 10);
 
@@ -156,10 +157,8 @@ function Multiply(
       }
 
       if (options?.reduce) {
-        Arith.reduceLaneLocals(0, Z, carry);
-        Arith.reduceLaneLocals(1, Z, carry);
+        Arith.reduceLocals(Z, carry, idx);
       }
-
       // propagate carries (to make limbs positive)
       carryLocals(Z);
 
