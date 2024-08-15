@@ -14,57 +14,69 @@ import { pallasParams } from "../concrete/pasta.params.js";
 import { Random } from "../testing/random.js";
 import { createEquivalentWasm, wasmSpec } from "../testing/equivalent-wasm.js";
 import { montMulFmaWrapped } from "./fma-js.js";
-import { Field, Memory } from "./field.js";
+import { Field } from "./field.js";
 
 let p = pallasParams.modulus;
 let R = (1n << 255n) % p;
 
+const Fp = await Field.create(p);
+let Local = Fp.Memory.local;
+
 // manual simple test
 {
-  let x = Memory.local.getPointer(Field.size);
-  let y = Memory.local.getPointer(Field.size);
-  let z = Memory.local.getPointer(Field.size);
+  let x = Local.getPointer(Fp.size);
+  let y = Local.getPointer(Fp.size);
+  let z = Local.getPointer(Fp.size);
 
-  Field.writeBigintPair(x, 1n, 1n);
-  Field.writeBigintPair(y, R, 1n);
-  Field.multiply(z, x, y);
+  Fp.writePair(x, 1n, 1n);
+  Fp.writePair(y, R, 1n);
+  Fp.Wasm.multiply(z, x, y);
 
-  let [z00, z01] = Field.readBigintPair(z);
+  let [z00, z01] = Fp.readPair(z);
   let z10 = montMulFmaWrapped(1n, R);
   let z11 = montMulFmaWrapped(1n, 1n);
 
   assertDeepEqual(z00, z10, "montmul wasm 1");
   assertDeepEqual(z01, z11, "montmul wasm 2");
+
+  // can read/write individual fields from pair
+  assertDeepEqual(Fp.read(z), z10, "read");
+  assertDeepEqual(Fp.readSecond(z), z11, "read 2nd");
+
+  Fp.write(z, 2n);
+  Fp.writeSecond(x, 3n);
+  assertDeepEqual(Fp.read(z), 2n, "write");
+  assertDeepEqual(Fp.readSecond(x), 3n, "write");
 }
 
 // property tests
 
-let eqivalentWasm = createEquivalentWasm(Memory, { logSuccess: true });
+let eqivalentWasm = createEquivalentWasm(Fp.Memory, { logSuccess: true });
 let fieldRng = Random.field(p);
 
-let field = wasmSpec(Memory, fieldRng, {
-  size: Field.size,
-  there: Field.writeBigint,
-  back: Field.readBigint,
+let field = wasmSpec(Fp.Memory, fieldRng, {
+  size: Fp.size,
+  there: (xPtr, x) => Fp.write(xPtr, x),
+  back: (x) => Fp.read(x),
 });
 
-let fieldPair = wasmSpec(Memory, Random.tuple([fieldRng, fieldRng]), {
-  size: Field.size,
-  there: (xPtr, [x0, x1]) => Field.writeBigintPair(xPtr, x0, x1),
-  back: Field.readBigintPair,
+let fieldPair = wasmSpec(Fp.Memory, Random.tuple([fieldRng, fieldRng]), {
+  size: Fp.size,
+  there: (xPtr, [x0, x1]) => Fp.writePair(xPtr, x0, x1),
+  back: (x) => Fp.readPair(x),
 });
 
 eqivalentWasm(
   { from: [field], to: field },
   (x) => x,
-  Field.copy,
+  (out, x) => Fp.copy(out, x),
   "wasm roundtrip"
 );
 
 eqivalentWasm(
   { from: [fieldPair], to: fieldPair },
   (x) => x,
-  Field.copy,
+  (out, x) => Fp.copy(out, x),
   "wasm roundtrip pair"
 );
 
@@ -73,7 +85,7 @@ eqivalentWasm(
 eqivalentWasm(
   { from: [field, field], to: field },
   montMulFmaWrapped,
-  Field.multiply,
+  Fp.Wasm.multiply,
   "montmul fma (wasm)"
 );
 
@@ -83,6 +95,6 @@ eqivalentWasm(
     montMulFmaWrapped(x[0], y[0]),
     montMulFmaWrapped(x[1], y[1]),
   ],
-  Field.multiply,
+  Fp.Wasm.multiply,
   "montmul fma pairwise"
 );
