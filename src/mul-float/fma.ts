@@ -37,6 +37,7 @@ import {
   mask64,
   bigintToFloat51Limbs,
 } from "./common.js";
+import { constF64x2, constI64x2 } from "./field-base.js";
 
 export { Multiply };
 
@@ -52,13 +53,6 @@ for (let i = 0; i < 11; i++) {
 }
 
 let nLocalsV128 = [v128, v128, v128, v128, v128] as const;
-
-function constF64x2(x: number) {
-  return v128.const("f64x2", [x, x]);
-}
-function constI64x2(x: bigint) {
-  return v128.const("i64x2", [x, x]);
-}
 
 function Multiply(p: bigint): Multiply {
   let pInv = inverse(-p, 1n << 51n);

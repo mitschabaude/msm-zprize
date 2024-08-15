@@ -8,6 +8,8 @@ export {
   float52ToInt64,
   bigintToFloat51Limbs,
   bigintFromFloat51Limbs,
+  bigintToInt51Limbs,
+  bigintFromInt51Limbs,
 };
 
 let bytes = new Uint8Array(8);
@@ -49,7 +51,14 @@ function float52ToInt64(x: number) {
 
 // conversion between bigints and limb vectors
 
-// store a limb vector of float64s
+// store a limb vector of int64s / float64s
+function bigintToInt51Limbs(x: bigint) {
+  return bigintToLimbsRelaxed(x, 51, 5);
+}
+function bigintFromInt51Limbs(x: BigUint64Array) {
+  return bigintFromLimbs(x, 51, 5);
+}
+
 function bigintToFloat51Limbs(x: bigint) {
   let limbs = bigintToLimbsRelaxed(x, 51, 5);
   let floats = new Float64Array(5);
