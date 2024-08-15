@@ -4,6 +4,7 @@
  * This code is taken from o1js: https://github.com/o1-labs/o1js
  */
 import { randomGenerators } from "../bigint/field-random.js";
+import { Tuple } from "../types.js";
 import { bigintFromBytes, log2, randomBytes } from "../util.js";
 
 export { Random, sample, sampleOne };
@@ -13,6 +14,8 @@ type Random<T> = {
   invalid?: Random<T>;
 };
 type RandomWithInvalid<T> = Required<Random<T>>;
+
+type InferRandom<T extends Random<any>> = T extends Random<infer U> ? U : never;
 
 function Random_<T>(
   next: () => T,
@@ -51,6 +54,7 @@ const Random = Object.assign(Random_, {
   uniformBytes,
   array,
   record,
+  tuple,
   map: Object.assign(map, { withInvalid: mapWithInvalid }),
   step,
   oneOf,
@@ -225,14 +229,12 @@ function recordValid<T extends {}>(gens: {
   };
 }
 
-function tupleValid<T extends readonly any[]>(
-  gens: {
-    [i in keyof T & number]: Random<T[i]>;
-  } & Random<any>[]
-): Random<T> {
+function tupleValid<T extends Tuple<Random<any>>>(
+  gens: T
+): Random<{ [K in keyof T]: InferRandom<T[K]> }> {
   return {
     create() {
-      let nexts = gens.map((gen) => gen.create());
+      let nexts = (gens as Random<any>[]).map((gen) => gen.create());
       return () => nexts.map((next) => next()) as any;
     },
   };
@@ -587,14 +589,12 @@ function record<T extends {}>(gens: {
 /**
  * invalid tuples are like invalid records
  */
-function tuple<T extends readonly any[]>(
-  gens: {
-    [K in keyof T & number]: Random<T[K]>;
-  } & Random<any>[]
-): Random<T> {
-  let valid = tupleValid<T>(gens);
+function tuple<T extends Tuple<Random<any>>>(
+  gens: T
+): Random<{ [K in keyof T]: InferRandom<T[K]> }> {
+  let valid = tupleValid(gens);
   let invalidFields: [number & keyof T, Random<any>][] = [];
-  gens.forEach((gen, i) => {
+  (gens as Random<any>[]).forEach((gen, i) => {
     let invalid = gen.invalid;
     if (invalid !== undefined) {
       invalidFields.push([i, invalid]);
@@ -629,12 +629,12 @@ function mapWithInvalid<T extends readonly any[], S>(
   const to = args.pop()! as (...values: T) => S;
   let rngs = args as { [K in keyof T]: Random<T[K]> };
   let valid = map<T, S>(...rngs, to);
-  let invalidInput = tuple<T>(rngs as Random<any>[]).invalid;
+  let invalidInput = tuple(rngs as Tuple<Random<any>>).invalid;
   if (invalidInput === undefined) return valid;
   let invalid = {
     create() {
       let nextInput = invalidInput!.create();
-      return () => to(...nextInput());
+      return () => to(...(nextInput() as any as T));
     },
   };
   return { ...valid, invalid };

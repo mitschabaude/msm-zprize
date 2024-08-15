@@ -1,5 +1,5 @@
 import { MsmField } from "../field-msm.js";
-import { MemoryHelpers } from "../wasm/memory-helpers.js";
+import { MemorySection } from "../wasm/memory-helpers.js";
 import { Get, Tuple } from "../types.js";
 import {
   First,
@@ -94,7 +94,10 @@ type WasmReturn<Out extends ToSpec<any, any>> = IsWasm<Out> extends true
   ? void
   : Second<Out>;
 
-function createEquivalentWasm(Memory: MemoryHelpers, testParams?: TestParams) {
+function createEquivalentWasm(
+  Memory: { local: MemorySection },
+  testParams?: TestParams
+) {
   return function run<
     const Signature extends {
       from: Tuple<FromSpec<any, any>>;
@@ -146,7 +149,7 @@ function createEquivalentWasm(Memory: MemoryHelpers, testParams?: TestParams) {
 // helper for writing wasm specs
 
 function wasmSpec<T>(
-  Memory: MemoryHelpers,
+  Memory: { local: MemorySection },
   rng: Random<T>,
   {
     size,

@@ -33,7 +33,7 @@ type WasmFunctions<
   }[Keys]
 >;
 
-type Tuple<T> = [T, ...T[]] | [];
+type Tuple<T = any> = [T, ...T[]] | [];
 type AnyTuple = Tuple<any>;
 
 /**
