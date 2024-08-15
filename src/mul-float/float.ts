@@ -557,9 +557,14 @@ let sizeFieldPair = 2 * sizeField;
 
 const Memory = memoryHelpers(p, 51, 5, { memory: wasmMemory.value });
 const memory = Memory.memoryBytes;
+
 const Field = {
   multiply: mulInstance.exports.multiply,
-  sizeField,
+  size: sizeFieldPair,
+
+  copy(x: number, y: number) {
+    memory.copyWithin(x, y, y + sizeFieldPair);
+  },
 
   writeBigintPair(x: number, x0: bigint, x1: bigint) {
     let view = new DataView(memory.buffer, x, sizeFieldPair);
@@ -578,8 +583,16 @@ const Field = {
       x1 >>= 51n;
     }
   },
+  // writes only one half of a pair and leaves the other as is
   writeBigint(x: number, x0: bigint) {
-    Field.writeBigintPair(x, x0, 0n);
+    let view = new DataView(memory.buffer, x, sizeFieldPair);
+
+    for (let offset = 0; offset < sizeFieldPair; offset += 16) {
+      view.setBigInt64(offset, (x0 & mask51) | c51n, true);
+      let x0F = view.getFloat64(offset, true);
+      view.setFloat64(offset, x0F - c51, true);
+      x0 >>= 51n;
+    }
   },
 
   readBigintPair(x: number) {
@@ -594,15 +607,20 @@ const Field = {
       let x1F = view.getFloat64(offset + 8, true);
       x1 = (x1 << 51n) | float52ToInt64(x1F);
     }
-
     return [x0, x1] satisfies Tuple;
   },
   readBigint(x: number) {
-    return Field.readBigintPair(x)[0];
+    let view = new DataView(memory.buffer, x, sizeFieldPair);
+    let x0 = 0n;
+    for (let offset = sizeFieldPair - 16; offset >= 0; offset -= 16) {
+      let x0F = view.getFloat64(offset, true);
+      x0 = (x0 << 51n) | float52ToInt64(x0F);
+    }
+    return x0;
   },
 };
 
-// manual test
+// manual simple test
 {
   let x = Memory.local.getPointer(sizeFieldPair);
   let y = Memory.local.getPointer(sizeFieldPair);
@@ -625,27 +643,33 @@ const Field = {
 let eqivalentWasm = createEquivalentWasm(Memory, { logSuccess: true });
 
 let fieldWasm = wasmSpec(Memory, field.rng, {
-  size: sizeFieldPair,
+  size: Field.size,
   there: Field.writeBigint,
   back: Field.readBigint,
 });
 
 let fieldPair = wasmSpec(Memory, Random.tuple([field.rng, field.rng]), {
-  size: sizeFieldPair,
+  size: Field.size,
   there: (xPtr, [x0, x1]) => Field.writeBigintPair(xPtr, x0, x1),
   back: Field.readBigintPair,
 });
 
 eqivalentWasm(
-  { from: [fieldPair], to: fieldPair },
+  { from: [fieldWasm], to: fieldWasm },
   (x) => x,
-  (out, x) => {
-    memory.copyWithin(out, x, x + sizeFieldPair);
-  },
+  Field.copy,
   "wasm roundtrip"
 );
 
+eqivalentWasm(
+  { from: [fieldPair], to: fieldPair },
+  (x) => x,
+  Field.copy,
+  "wasm roundtrip pair"
+);
+
 // wasm version is exactly equivalent to montmulFma
+
 eqivalentWasm(
   { from: [fieldWasm, fieldWasm], to: fieldWasm },
   montMulFmaWrapped,
