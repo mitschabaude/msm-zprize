@@ -19,6 +19,7 @@ import {
   montmul,
   montMulFmaWrapped,
   montMulFmaWrapped2,
+  montmulNoFmaWrapped,
   montmulRef,
   montmulSimple,
 } from "./fma-js.js";
@@ -124,4 +125,11 @@ equivalent({ from: [field, field], to: fieldStrict, verbose: true })(
   montmul,
   montMulFmaWrapped2,
   "montmul fma 2 (js)"
+);
+
+// montmulNoFma is exactly equivalent to montmul
+equivalent({ from: [field, field], to: fieldStrict, verbose: true })(
+  montmul,
+  montmulNoFmaWrapped,
+  "montmul no fma (js)"
 );

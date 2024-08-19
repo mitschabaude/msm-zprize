@@ -12,11 +12,13 @@
 import { f64, f64x2, func, Module } from "wasmati";
 import { pallasParams } from "../concrete/pasta.params.js";
 import { createField, inverse } from "../bigint/field.js";
-import { assert, bigintFromLimbs, bigintToLimbsRelaxed } from "../util.js";
+import { assert, bigintToLimbsRelaxed } from "../util.js";
 import {
   bigint64ToNumber,
   bigintFromFloat51Limbs,
+  bigintFromInt51Limbs,
   bigintToFloat51Limbs,
+  bigintToInt51Limbs,
   c103,
   c2,
   c51,
@@ -38,6 +40,7 @@ export {
   montmulFma,
   montMulFmaWrapped,
   montMulFmaWrapped2,
+  montmulNoFmaWrapped,
 };
 
 // bigint mul using float madd instruction
@@ -81,8 +84,8 @@ function montmulRef(xR: bigint, yR: bigint) {
 }
 
 function montmul(x: bigint, y: bigint) {
-  let X = bigintToLimbsRelaxed(x, 51, 5);
-  let Y = bigintToLimbsRelaxed(y, 51, 5);
+  let X = bigintToInt51Limbs(x);
+  let Y = bigintToInt51Limbs(y);
 
   let Z = new BigUint64Array(6);
 
@@ -109,7 +112,7 @@ function montmul(x: bigint, y: bigint) {
     }
     Z[5] = 0n;
   }
-  return bigintFromLimbs(Z, 51, 5);
+  return bigintFromInt51Limbs(Z);
 }
 
 let PF = bigintToFloat51Limbs(p);
@@ -237,4 +240,75 @@ function montMulFmaWrapped2(x: bigint, y: bigint) {
   let Y = bigintToFloat51Limbs(y);
   let Z = montmulFma2(X, Y);
   return bigintFromFloat51Limbs(Z);
+}
+
+const mask26 = (1n << 26n) - 1n;
+
+let PI = bigintToInt51Limbs(p);
+let PLo = PI.map((x) => x & mask26);
+let PHi = PI.map((x) => x >> 26n);
+
+// version that doesn't require fma instructions / relaxed_simd
+function montmulNoFma(X: BigUint64Array, Y: BigUint64Array) {
+  let Z = new BigUint64Array(6);
+  let Ylo = new BigUint64Array(5);
+  let Yhi = new BigUint64Array(5);
+
+  // initialize Ylo, Yhi
+  for (let i = 0; i < 5; i++) {
+    let yi = Y[i];
+    Ylo[i] = yi & mask26;
+    Yhi[i] = yi >> 26n;
+  }
+
+  for (let i = 0; i < 5; i++) {
+    let xi = X[i];
+    let xiLo = xi & mask26;
+    let xiHi = xi >> 26n;
+
+    for (let j = 0; j < 5; j++) {
+      let lo = xiLo * Ylo[j];
+      let mid = xiLo * Yhi[j] + xiHi * Ylo[j];
+      let hi = xiHi * Yhi[j];
+      Z[j] += lo + ((mid & mask26) << 26n);
+      Z[j + 1] += 2n * ((mid >> 26n) + hi);
+    }
+
+    let qi = (Z[0] * pInv) & mask51;
+    let qiLo = qi & mask26;
+    let qiHi = qi >> 26n;
+
+    for (let j = 0; j < 5; j++) {
+      let lo = qiLo * PLo[j];
+      let mid = qiLo * PHi[j] + qiHi * PLo[j];
+      let hi = qiHi * PHi[j];
+      Z[j] += lo + ((mid & mask26) << 26n);
+      Z[j + 1] += 2n * ((mid >> 26n) + hi);
+    }
+
+    Z[1] += Z[0] >> 51n;
+    for (let j = 0; j < 5; j++) {
+      Z[j] = Z[j + 1];
+    }
+    Z[5] = 0n;
+  }
+  assert(Z[4] >= 0, `negative top limb ${Z[4]}`);
+
+  // propagate carries to make limbs positive
+  let carry = 0n;
+  for (let i = 0; i < 5; i++) {
+    Z[i] += carry;
+    let lo = Z[i] & mask51;
+    carry = Z[i] >> 51n;
+    Z[i] = lo;
+  }
+  assert(carry === 0n, `carry ${carry}`);
+  return Z;
+}
+
+function montmulNoFmaWrapped(x: bigint, y: bigint) {
+  let X = bigintToInt51Limbs(x);
+  let Y = bigintToInt51Limbs(y);
+  let Z = montmulNoFma(X, Y);
+  return bigintFromInt51Limbs(Z);
 }
