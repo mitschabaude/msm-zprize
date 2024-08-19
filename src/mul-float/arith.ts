@@ -195,18 +195,6 @@ function arithmetic(p: bigint, pSelectPtr: Global<i32>) {
     }
   );
 
-  const additionFNoCarry = func(
-    { in: [i32, i32, i32], out: [] },
-    ([out, x, y]) => {
-      Field.forEach((i) => {
-        let xi = Field.loadLimb(x, i);
-        let yi = Field.loadLimb(y, i);
-        f64x2.add(xi, yi);
-        Field.storeLimb(out, i, $);
-      });
-    }
-  );
-
   return {
     fullyReduce,
     fullyReduceLane,

@@ -40,6 +40,7 @@ async function benchmark(
     let x = Fp.Memory.local.getPointer(Fp.size);
     Fp.writePair(x, randomField(), randomField());
     bench("multiply 51x5", Fp.Wasm.benchMultiply, { x, N }, 2);
+    Fp.writePair(x, randomField(), randomField());
     bench("multiply 51x5", Fp.Wasm.benchMultiply, { x, N }, 2);
   }
 
