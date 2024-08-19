@@ -18,8 +18,8 @@ function validateAssumptions(modulus: bigint) {
 }
 
 type WasmIntf = {
-  multiply: (z: number, x: number, y: number) => void;
-  multiplyReduce: (z: number, x: number, y: number) => void;
+  multiplyCarryConvert: (z: number, x: number, y: number) => void;
+  multiplyReduceCarryConvert: (z: number, x: number, y: number) => void;
 };
 
 async function createWasm(p: bigint, { memSize = 1 << 16 } = {}) {
@@ -27,12 +27,24 @@ async function createWasm(p: bigint, { memSize = 1 << 16 } = {}) {
   let implicitMemory = new ImplicitMemory(wasmMemory);
   let pSelectPtr = pSelect(p, implicitMemory);
 
-  let { multiply } = Multiply(p, pSelectPtr);
-  let { multiply: multiplyReduce } = Multiply(p, pSelectPtr, { reduce: true });
+  let { multiply: multiplyCarryConvert } = Multiply(p, pSelectPtr, {
+    reduce: false,
+    carry: true,
+    convert: true,
+  });
+  let { multiply: multiplyReduceCarryConvert } = Multiply(p, pSelectPtr, {
+    reduce: true,
+    carry: true,
+    convert: true,
+  });
 
   let multiplyModule = Module({
     memory: wasmMemory,
-    exports: { multiply, multiplyReduce, ...implicitMemory.getExports() },
+    exports: {
+      multiplyCarryConvert,
+      multiplyReduceCarryConvert,
+      ...implicitMemory.getExports(),
+    },
   });
   let { instance } = await multiplyModule.instantiate();
 
@@ -155,7 +167,11 @@ async function createWasmWithBenches(p: bigint) {
   let implicitMemory = new ImplicitMemory(wasmMemory);
   let pSelectPtr = pSelect(p, implicitMemory);
 
-  let { multiply } = Multiply(p, pSelectPtr, { reduce: true });
+  let { multiply } = Multiply(p, pSelectPtr, {
+    reduce: true,
+    carry: true,
+    convert: true,
+  });
 
   const benchMultiply = func(
     { in: [i32, i32], locals: [i32], out: [] },

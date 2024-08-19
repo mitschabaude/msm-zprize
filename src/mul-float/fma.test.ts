@@ -40,7 +40,7 @@ if (doWrite && Fp.moduleBytes) {
 
   Fp.writePair(x, 1n, 1n);
   Fp.writePair(y, R, 1n);
-  Fp.Wasm.multiply(z, x, y);
+  Fp.Wasm.multiplyCarryConvert(z, x, y);
 
   let [z00, z01] = Fp.readPair(z);
   let z10 = montMulFmaWrapped(1n, R);
@@ -95,7 +95,7 @@ eqivalentWasm(
 eqivalentWasm(
   { from: [field, field], to: field },
   montMulFmaWrapped,
-  Fp.Wasm.multiply,
+  Fp.Wasm.multiplyCarryConvert,
   "mul fma"
 );
 
@@ -105,7 +105,7 @@ eqivalentWasm(
     montMulFmaWrapped(x[0], y[0]),
     montMulFmaWrapped(x[1], y[1]),
   ],
-  Fp.Wasm.multiply,
+  Fp.Wasm.multiplyCarryConvert,
   "mul fma pairwise"
 );
 
@@ -122,7 +122,7 @@ function montmulReduce(x: bigint, y: bigint) {
 eqivalentWasm(
   { from: [field, field], to: field },
   montmulReduce,
-  Fp.Wasm.multiplyReduce,
+  Fp.Wasm.multiplyReduceCarryConvert,
   "mul reduce"
 );
 
@@ -132,11 +132,29 @@ eqivalentWasm(
     montmulReduce(x[0], y[0]),
     montmulReduce(x[1], y[1]),
   ],
-  Fp.Wasm.multiplyReduce,
+  Fp.Wasm.multiplyReduceCarryConvert,
   "mul reduce pairwise"
 );
 
-// it's still equivalent when we do 1000 squarings in a row
+// it's still equivalent when we do 1000 muls or squarings in a row
+
+eqivalentWasm(
+  { from: [field], to: field },
+  (x) => {
+    let z = x;
+    for (let i = 0; i < 1000; i++) {
+      z = montmulReduce(z, x);
+    }
+    return z;
+  },
+  (z, x) => {
+    Fp.copy(z, x);
+    for (let i = 0; i < 1000; i++) {
+      Fp.Wasm.multiplyReduceCarryConvert(z, z, x);
+    }
+  },
+  "mul reduce 1000"
+);
 
 eqivalentWasm(
   { from: [field], to: field },
@@ -148,9 +166,9 @@ eqivalentWasm(
   },
   (z, x) => {
     for (let i = 0; i < 1000; i++) {
-      Fp.Wasm.multiplyReduce(x, x, x);
+      Fp.Wasm.multiplyReduceCarryConvert(x, x, x);
     }
     Fp.copy(z, x);
   },
-  "mul reduce 1000"
+  "sqr reduce 1000"
 );

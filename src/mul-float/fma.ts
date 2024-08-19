@@ -40,6 +40,7 @@ import {
 } from "./common.js";
 import { constF64x2, constI64x2 } from "./field-base.js";
 import { arithmetic, carryLocals } from "./arith.js";
+import { assert } from "../util.js";
 
 export { Multiply };
 
@@ -59,12 +60,35 @@ let nLocalsV128 = [v128, v128, v128, v128, v128] as const;
 function Multiply(
   p: bigint,
   pSelectPtr: Global<i32>,
-  options?: { reduce?: boolean }
+  /**
+   * Parameters that determine the amount of normalization done on the multiplication output
+   */
+  {
+    reduce = false,
+    carry = true,
+    convert = true,
+  }: {
+    /**
+     * Whether to optionally subtract p to bring the result back into a range < p + eps with eps << p
+     */
+    reduce?: boolean;
+    /**
+     * Whether to propagate carries and make limbs positive
+     */
+    carry?: boolean;
+    /**
+     * Whether to convert the result back to a float64
+     */
+    convert?: boolean;
+  } = {}
 ): Multiply {
   let pInv = inverse(-p, 1n << 51n);
   let PF = bigintToFloat51Limbs(p);
 
-  let Arith = arithmetic(p, pSelectPtr);
+  // if we convert the output to float64, we need to carry as well
+  assert(!convert || carry, "must carry if converting to float64");
+
+  let { reduceLocals } = arithmetic(p, pSelectPtr);
 
   // original version that turned out to be slower
   let multiply2 = func(
@@ -156,17 +180,19 @@ function Multiply(
         local.set(Z[4]);
       }
 
-      if (options?.reduce) {
-        Arith.reduceLocals(Z, carry, idx);
-      }
-      // propagate carries (to make limbs positive)
-      carryLocals(Z);
+      if (reduce) reduceLocals(Z, carry, idx);
+      if (carry) carryLocals(Z);
 
-      // convert to f64, store in memory
+      // convert to f64
+      if (convert)
+        for (let i = 0; i < 5; i++) {
+          i64x2.add(Z[i], constI64x2(c52n));
+          f64x2.sub($, constF64x2(c52));
+          local.set(Z[i], $);
+        }
+
       for (let i = 0; i < 5; i++) {
-        i64x2.add(Z[i], constI64x2(c52n));
-        f64x2.sub($, constF64x2(c52));
-        v128.store({ offset: i * 16 }, z, $);
+        v128.store({ offset: i * 16 }, z, Z[i]);
       }
     }
   );
@@ -236,18 +262,16 @@ function Multiply(
         if (i < 4) local.set(Z[5], constI64x2(zInitial[6 + i]));
       }
 
-      if (options?.reduce) {
-        Arith.reduceLocals(Z, tmp, idx);
-      }
-      // propagate carries (to make limbs positive)
-      carryLocals(Z);
+      if (reduce) reduceLocals(Z, tmp, idx);
+      if (carry) carryLocals(Z);
 
-      // convert to f64
-      for (let i = 0; i < 5; i++) {
-        i64x2.add(Z[i], constI64x2(c52n));
-        f64x2.sub($, constF64x2(c52));
-        local.set(Z[i], $);
-      }
+      // convert output to f64
+      if (convert)
+        for (let i = 0; i < 5; i++) {
+          i64x2.add(Z[i], constI64x2(c52n));
+          f64x2.sub($, constF64x2(c52));
+          local.set(Z[i], $);
+        }
 
       // store in memory
       for (let i = 0; i < 5; i++) {
