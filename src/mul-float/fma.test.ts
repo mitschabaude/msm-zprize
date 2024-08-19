@@ -207,3 +207,13 @@ eqivalentWasm(
   Fp.Wasm.multiplyNoFma,
   "mul no fma"
 );
+
+eqivalentWasm(
+  { from: [fieldPairInt, fieldPairInt], to: fieldPairInt },
+  (x, y): [bigint, bigint] => [
+    montmulReduce(x[0], y[0]),
+    montmulReduce(x[1], y[1]),
+  ],
+  Fp.Wasm.multiplyNoFma,
+  "mul no fma pairwise"
+);
