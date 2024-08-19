@@ -182,8 +182,10 @@ function montMulFmaWrapped(x: bigint, y: bigint) {
   return bigintFromFloat51Limbs(Z);
 }
 
+// version that is structured like Niall Emmart's version from https://github.com/yrrid/submission-wasm-twisted-edwards (FieldPair.c)
 function montmulFma2(X: Float64Array, Y: Float64Array) {
   let Z = new BigInt64Array(6);
+  let LH = new Float64Array(5);
 
   // initialize Z with constants that offset float64 prefixes
   for (let i = 0; i < 6; i++) {
@@ -193,30 +195,28 @@ function montmulFma2(X: Float64Array, Y: Float64Array) {
   for (let i = 0; i < 5; i++) {
     let xi = X[i];
 
-    for (let j = 0; j < 5; j++) {
-      let yj = Y[j];
-      let hi = madd(xi, yj, c103);
-      let lo = madd(xi, yj, c2 - hi);
-      Z[j] += numberToBigint64(lo);
-      Z[j + 1] += numberToBigint64(hi);
-    }
+    for (let j = 0; j < 5; j++) LH[j] = madd(xi, Y[j], c103); // hi
+    for (let j = 0; j < 5; j++) Z[j + 1] += numberToBigint64(LH[j]);
+    for (let j = 0; j < 5; j++) LH[j] = c2 - LH[j]; // lo sub
+    for (let j = 0; j < 5; j++) LH[j] = madd(xi, Y[j], LH[j]); // lo
+    for (let j = 0; j < 5; j++) Z[j] += numberToBigint64(LH[j]);
 
     let qi = bigint64ToNumber(((Z[0] * pInv) & mask51) + c51n) - c51;
 
-    for (let j = 0; j < 5; j++) {
-      let pj = PF[j];
-      let hi = madd(qi, pj, c103);
-      let lo = madd(qi, pj, c2 - hi);
-      Z[j] += numberToBigint64(lo);
-      Z[j + 1] += numberToBigint64(hi);
-    }
+    for (let j = 0; j < 5; j++) LH[j] = madd(qi, PF[j], c103); // hi
+    for (let j = 0; j < 5; j++) Z[j + 1] += numberToBigint64(LH[j]);
+    for (let j = 0; j < 5; j++) LH[j] = c2 - LH[j]; // lo sub
+    for (let j = 0; j < 5; j++) LH[j] = madd(qi, PF[j], LH[j]); // lo
 
-    // shift down after propagating carry from first limb
-    Z[1] += Z[0] >> 51n;
-    for (let j = 0; j < 5; j++) {
-      Z[j] = Z[j + 1];
+    Z[0] = Z[0] + numberToBigint64(LH[0]);
+    Z[1] = Z[1] + numberToBigint64(LH[1]);
+    Z[0] = Z[1] + (Z[0] >> 51n);
+
+    for (let j = 1; j < 4; j++) {
+      Z[j] = Z[j + 1] + numberToBigint64(LH[j + 1]);
     }
-    Z[5] = zInitial[6 + i];
+    Z[4] = Z[5];
+    if (i < 4) Z[5] = zInitial[6 + i];
   }
   assert(Z[4] >= 0, `negative top limb ${Z[4]}`);
 
