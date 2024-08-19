@@ -48,9 +48,9 @@ type Multiply = {
 };
 
 let zInitial = new BigInt64Array(11);
-let loCount = [1n, 2n, 3n, 4n, 5n, 4n, 3n, 2n, 1n, 0n, 0n];
-let hiCount = [0n, 1n, 2n, 3n, 4n, 5n, 4n, 3n, 2n, 1n, 0n];
-for (let i = 0; i < 11; i++) {
+let loCount = [1n, 2n, 3n, 4n, 5n, 4n, 3n, 2n, 1n, 0n];
+let hiCount = [0n, 1n, 2n, 3n, 4n, 5n, 4n, 3n, 2n, 1n];
+for (let i = 0; i < 10; i++) {
   zInitial[i] = -((2n * (hiCount[i] * hiPre + loCount[i] * loPre)) & mask64);
 }
 
@@ -66,7 +66,8 @@ function Multiply(
 
   let Arith = arithmetic(p, pSelectPtr);
 
-  let multiply = func(
+  // original version that turned out to be slower
+  let multiply2 = func(
     {
       in: [i32, i32, i32], // pointers to z, x, y, where z = x * y
       out: [],
@@ -167,6 +168,92 @@ function Multiply(
         i64x2.add(Z[i], constI64x2(c52n));
         f64x2.sub($, constF64x2(c52));
         v128.store({ offset: i * 16 }, z, $);
+      }
+    }
+  );
+
+  let multiply = func(
+    {
+      in: [i32, i32, i32], // pointers to z, x, y, where z = x * y
+      out: [],
+      locals: [v128, i32, ...nLocalsV128, ...nLocalsV128, ...nLocalsV128, v128],
+    },
+    ([z, x, y], [tmp, idx, ...rest]) => {
+      let Y = rest.slice(0, 5);
+      let LH = rest.slice(5, 10);
+      let Z = rest.slice(10, 16);
+
+      // load y from memory into locals
+      for (let i = 0; i < 5; i++) {
+        let xi = v128.load({ offset: i * 16 }, y);
+        local.set(Y[i], xi);
+      }
+
+      // initialize Z with constants that offset float64 prefixes
+      for (let i = 0; i < 6; i++) {
+        local.set(Z[i], constI64x2(zInitial[i]));
+      }
+
+      for (let i = 0; i < 5; i++) {
+        let xi = tmp;
+        local.set(xi, v128.load({ offset: i * 16 }, x));
+
+        for (let j = 0; j < 5; j++)
+          local.set(LH[j], f64x2.relaxed_madd(xi, Y[j], constF64x2(c103))); // hi
+        for (let j = 0; j < 5; j++)
+          local.set(Z[j + 1], i64x2.add(Z[j + 1], LH[j]));
+        for (let j = 0; j < 5; j++)
+          local.set(LH[j], f64x2.sub(constF64x2(c2), LH[j])); // lo sub
+        for (let j = 0; j < 5; j++)
+          local.set(LH[j], f64x2.relaxed_madd(xi, Y[j], LH[j])); // lo
+        for (let j = 0; j < 5; j++) local.set(Z[j], i64x2.add(Z[j], LH[j]));
+
+        // compute qi
+        let qi = tmp;
+        i64x2.mul(Z[0], constI64x2(pInv));
+        v128.and($, constI64x2(mask51));
+        i64x2.add($, constI64x2(c51n));
+        f64x2.sub($, constF64x2(c51));
+        local.set(qi);
+
+        for (let j = 0; j < 5; j++)
+          local.set(
+            LH[j],
+            f64x2.relaxed_madd(qi, constF64x2(PF[j]), constF64x2(c103))
+          );
+        for (let j = 0; j < 5; j++)
+          local.set(Z[j + 1], i64x2.add(Z[j + 1], LH[j]));
+        for (let j = 0; j < 5; j++)
+          local.set(LH[j], f64x2.sub(constF64x2(c2), LH[j])); // lo sub
+        for (let j = 0; j < 5; j++)
+          local.set(LH[j], f64x2.relaxed_madd(qi, constF64x2(PF[j]), LH[j])); // lo
+
+        local.set(Z[0], i64x2.add(Z[0], LH[0]));
+        local.set(Z[1], i64x2.add(Z[1], LH[1]));
+        local.set(Z[0], i64x2.add(Z[1], i64x2.shr_s(Z[0], 51)));
+        local.set(Z[1], i64x2.add(Z[2], LH[2]));
+        local.set(Z[2], i64x2.add(Z[3], LH[3]));
+        local.set(Z[3], i64x2.add(Z[4], LH[4]));
+        local.set(Z[4], Z[5]);
+        if (i < 4) local.set(Z[5], constI64x2(zInitial[6 + i]));
+      }
+
+      if (options?.reduce) {
+        Arith.reduceLocals(Z, tmp, idx);
+      }
+      // propagate carries (to make limbs positive)
+      carryLocals(Z);
+
+      // convert to f64
+      for (let i = 0; i < 5; i++) {
+        i64x2.add(Z[i], constI64x2(c52n));
+        f64x2.sub($, constF64x2(c52));
+        local.set(Z[i], $);
+      }
+
+      // store in memory
+      for (let i = 0; i < 5; i++) {
+        v128.store({ offset: i * 16 }, z, Z[i]);
       }
     }
   );

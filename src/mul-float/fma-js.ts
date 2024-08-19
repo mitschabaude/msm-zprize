@@ -114,10 +114,10 @@ function montmul(x: bigint, y: bigint) {
 
 let PF = bigintToFloat51Limbs(p);
 
-let zInitial = new BigInt64Array(11);
-let loCount = [1n, 2n, 3n, 4n, 5n, 4n, 3n, 2n, 1n, 0n, 0n];
-let hiCount = [0n, 1n, 2n, 3n, 4n, 5n, 4n, 3n, 2n, 1n, 0n];
-for (let i = 0; i < 11; i++) {
+let zInitial = new BigInt64Array(10);
+let loCount = [1n, 2n, 3n, 4n, 5n, 4n, 3n, 2n, 1n, 0n];
+let hiCount = [0n, 1n, 2n, 3n, 4n, 5n, 4n, 3n, 2n, 1n];
+for (let i = 0; i < 10; i++) {
   zInitial[i] = -((2n * (hiCount[i] * hiPre + loCount[i] * loPre)) & mask64);
 }
 
@@ -211,7 +211,6 @@ function montmulFma2(X: Float64Array, Y: Float64Array) {
     Z[0] = Z[0] + numberToBigint64(LH[0]);
     Z[1] = Z[1] + numberToBigint64(LH[1]);
     Z[0] = Z[1] + (Z[0] >> 51n);
-
     for (let j = 1; j < 4; j++) {
       Z[j] = Z[j + 1] + numberToBigint64(LH[j + 1]);
     }
