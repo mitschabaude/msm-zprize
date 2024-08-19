@@ -37,6 +37,7 @@ import {
   mask51,
   mask64,
   bigintToFloat51Limbs,
+  bigintToInt51Limbs,
 } from "./common.js";
 import { constF64x2, constI64x2 } from "./field-base.js";
 import { arithmetic, carryLocals } from "./arith.js";
@@ -46,6 +47,7 @@ export { Multiply };
 
 type Multiply = {
   multiply: Func<["i32", "i32", "i32"], []>;
+  multiplyNoFma: Func<["i32", "i32", "i32"], []>;
 };
 
 let zInitial = new BigInt64Array(11);
@@ -197,6 +199,9 @@ function Multiply(
     }
   );
 
+  /**
+   * Main 51x5 multiplication routine, using FMA instructions from the "relaxed SIMD" Wasm extension.
+   */
   let multiply = func(
     {
       in: [i32, i32, i32], // pointers to z, x, y, where z = x * y
@@ -280,7 +285,117 @@ function Multiply(
     }
   );
 
-  return { multiply };
+  let mask26 = (1n << 26n) - 1n;
+  let PI = bigintToInt51Limbs(p);
+  let Plo = PI.map((x) => x & mask26);
+  let Phi = PI.map((x) => x >> 26n);
+
+  /**
+   * 51x5 multiplication without using FMA instructions, as a fallback for compatibility.
+   */
+  let multiplyNoFma = func(
+    {
+      in: [i32, i32, i32], // pointers to z, x, y, where z = x * y
+      out: [],
+      locals: [
+        v128,
+        i32,
+        v128,
+        v128,
+        ...nLocalsV128,
+        ...nLocalsV128,
+        ...nLocalsV128,
+        v128,
+      ],
+    },
+    ([z, x, y], [tmp, idx, xiLo, xiHi, ...rest]) => {
+      let Ylo = rest.slice(0, 5);
+      let Yhi = rest.slice(5, 10);
+      let Z = rest.slice(10, 16);
+
+      // load y from memory into locals
+      for (let i = 0; i < 5; i++) {
+        local.set(tmp, v128.load({ offset: i * 16 }, y));
+        local.set(Ylo[i], v128.and(tmp, constI64x2(mask26)));
+        local.set(Yhi[i], i64x2.shr_s(tmp, 26));
+      }
+
+      for (let i = 0; i < 5; i++) {
+        local.set(tmp, v128.load({ offset: i * 16 }, x));
+        local.set(xiLo, v128.and(tmp, constI64x2(mask26)));
+        local.set(xiHi, i64x2.shr_s(tmp, 26));
+
+        for (let j = 0; j < 5; j++) {
+          let mid = tmp;
+          i64x2.mul(xiLo, Yhi[j]);
+          i64x2.mul(xiHi, Ylo[j]);
+          local.set(mid, i64x2.add());
+
+          // Z[j] += lo + ((mid & mask26) << 26n);
+          v128.and(mid, constI64x2(mask26));
+          i64x2.shl($, 26);
+          i64x2.mul(xiLo, Ylo[j]);
+          i64x2.add();
+          local.set(Z[j], i64x2.add($, Z[j]));
+
+          // Z[j + 1] += 2n * ((mid >> 26n) + hi);
+          i64x2.shr_s(mid, 26);
+          i64x2.mul(xiHi, Yhi[j]);
+          i64x2.add();
+          i64x2.shl($, 1);
+          local.set(Z[j + 1], i64x2.add($, Z[j + 1]));
+        }
+
+        // compute qi
+        let qi = tmp;
+        let qiLo = xiLo;
+        let qiHi = xiHi;
+        i64x2.mul(Z[0], constI64x2(pInv));
+        v128.and($, constI64x2(mask51));
+        local.set(qi);
+        local.set(qiLo, v128.and(qi, constI64x2(mask26)));
+        local.set(qiHi, i64x2.shr_s(qi, 26));
+
+        for (let j = 0; j < 5; j++) {
+          let mid = tmp;
+          i64x2.mul(qiLo, constI64x2(Phi[j]));
+          i64x2.mul(qiHi, constI64x2(Plo[j]));
+          local.set(mid, i64x2.add());
+
+          // Z[j] += lo + ((mid & mask26) << 26n);
+          v128.and(mid, constI64x2(mask26));
+          i64x2.shl($, 26);
+          i64x2.mul(qiLo, constI64x2(Plo[j]));
+          i64x2.add();
+          local.set(Z[j], i64x2.add($, Z[j]));
+
+          // Z[j + 1] += 2n * ((mid >> 26n) + hi);
+          i64x2.shr_s(mid, 26);
+          i64x2.mul(qiHi, constI64x2(Phi[j]));
+          i64x2.add();
+          i64x2.shl($, 1);
+          local.set(Z[j + 1], i64x2.add($, Z[j + 1]));
+        }
+
+        local.set(Z[1], i64x2.add(Z[1], i64x2.shr_s(Z[0], 51)));
+        for (let j = 0; j < 5; j++) {
+          local.set(Z[j], Z[j + 1]);
+        }
+        local.set(Z[5], constI64x2(0n));
+      }
+
+      // carryLocals(Z);
+      if (reduce) reduceLocals(Z, tmp, idx);
+      if (carry) carryLocals(Z);
+
+      // store in memory
+      for (let i = 0; i < 5; i++) {
+        v128.store({ offset: i * 16 }, z, Z[i]);
+      }
+    }
+  );
+
+  return { multiply, multiplyNoFma };
 }
 
 // debugging helpers, currently unused

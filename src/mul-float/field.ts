@@ -20,6 +20,7 @@ function validateAssumptions(modulus: bigint) {
 type WasmIntf = {
   multiplyCarryConvert: (z: number, x: number, y: number) => void;
   multiplyReduceCarryConvert: (z: number, x: number, y: number) => void;
+  multiplyNoFma: (z: number, x: number, y: number) => void;
 };
 
 async function createWasm(p: bigint, { memSize = 1 << 16 } = {}) {
@@ -32,17 +33,18 @@ async function createWasm(p: bigint, { memSize = 1 << 16 } = {}) {
     carry: true,
     convert: true,
   });
-  let { multiply: multiplyReduceCarryConvert } = Multiply(p, pSelectPtr, {
-    reduce: true,
-    carry: true,
-    convert: true,
-  });
+  let { multiply: multiplyReduceCarryConvert, multiplyNoFma } = Multiply(
+    p,
+    pSelectPtr,
+    { reduce: true, carry: true, convert: true }
+  );
 
   let multiplyModule = Module({
     memory: wasmMemory,
     exports: {
       multiplyCarryConvert,
       multiplyReduceCarryConvert,
+      multiplyNoFma,
       ...implicitMemory.getExports(),
     },
   });
@@ -154,12 +156,70 @@ class Field<Wasm> {
   readSecond(x: number) {
     return this.read(x + 8);
   }
+
+  // version of read/write methods that work with int64s
+
+  writePairI(x: number, x0: bigint, x1: bigint) {
+    let view = new DataView(this.memory.buffer, x, sizeFieldPair);
+
+    for (let offset = 0; offset < sizeFieldPair; offset += 16) {
+      // we write each limb of x0 and x1 next to each other, as one v128
+      view.setBigInt64(offset, x0 & mask51, true);
+      view.setBigInt64(offset + 8, x1 & mask51, true);
+      x0 >>= 51n;
+      x1 >>= 51n;
+    }
+  }
+
+  // writes only one half of a pair and leaves the other as is
+  writeI(x: number, x0: bigint) {
+    let view = new DataView(this.memory.buffer, x, sizeFieldPair);
+
+    for (let offset = 0; offset < sizeFieldPair; offset += 16) {
+      view.setBigInt64(offset, x0 & mask51, true);
+      x0 >>= 51n;
+    }
+  }
+
+  writeSecondI(x: number, x1: bigint) {
+    this.writeI(x + 8, x1);
+  }
+
+  readPairI(x: number) {
+    let view = new DataView(this.memory.buffer, x, sizeFieldPair);
+    let x0 = 0n;
+    let x1 = 0n;
+
+    for (let offset = sizeFieldPair - 16; offset >= 0; offset -= 16) {
+      let x0I = view.getBigInt64(offset, true);
+      x0 = (x0 << 51n) | x0I;
+
+      let x1I = view.getBigInt64(offset + 8, true);
+      x1 = (x1 << 51n) | x1I;
+    }
+    return [x0, x1] satisfies Tuple;
+  }
+
+  readI(x: number) {
+    let view = new DataView(this.memory.buffer, x, sizeFieldPair);
+    let x0 = 0n;
+    for (let offset = sizeFieldPair - 16; offset >= 0; offset -= 16) {
+      let x0I = view.getBigInt64(offset, true);
+      x0 = (x0 << 51n) | x0I;
+    }
+    return x0;
+  }
+
+  readSecondI(x: number) {
+    return this.readI(x + 8);
+  }
 }
 
 // version with benchmark scripts
 
 type WasmIntfWithBenches = {
   benchMultiply: (x: number, N: number) => void;
+  benchMultiplyNoFma: (x: number, N: number) => void;
 };
 
 async function createWasmWithBenches(p: bigint) {
@@ -167,7 +227,7 @@ async function createWasmWithBenches(p: bigint) {
   let implicitMemory = new ImplicitMemory(wasmMemory);
   let pSelectPtr = pSelect(p, implicitMemory);
 
-  let { multiply } = Multiply(p, pSelectPtr, {
+  let { multiply, multiplyNoFma } = Multiply(p, pSelectPtr, {
     reduce: true,
     carry: true,
     convert: true,
@@ -181,10 +241,18 @@ async function createWasmWithBenches(p: bigint) {
       });
     }
   );
+  const benchMultiplyNoFma = func(
+    { in: [i32, i32], locals: [i32], out: [] },
+    ([x, N], [i]) => {
+      forLoop1(i, 0, N, () => {
+        call(multiplyNoFma, [x, x, x]);
+      });
+    }
+  );
 
   let multiplyModule = Module({
     memory: wasmMemory,
-    exports: { multiply, benchMultiply },
+    exports: { benchMultiply, benchMultiplyNoFma },
   });
   let { instance } = await multiplyModule.instantiate();
 

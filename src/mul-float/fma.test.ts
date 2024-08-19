@@ -172,3 +172,38 @@ eqivalentWasm(
   },
   "sqr reduce 1000"
 );
+
+// wasm mul without fma
+
+let fieldInt = wasmSpec(Fp.Memory, fieldRng, {
+  size: Fp.size,
+  there: (xPtr, x) => Fp.writeI(xPtr, x),
+  back: (x) => Fp.readI(x),
+});
+
+let fieldPairInt = wasmSpec(Fp.Memory, Random.tuple([fieldRng, fieldRng]), {
+  size: Fp.size,
+  there: (xPtr, [x0, x1]) => Fp.writePairI(xPtr, x0, x1),
+  back: (x) => Fp.readPairI(x),
+});
+
+eqivalentWasm(
+  { from: [fieldInt], to: fieldInt },
+  (x) => x,
+  (out, x) => Fp.copy(out, x),
+  "wasm roundtrip"
+);
+
+eqivalentWasm(
+  { from: [fieldPairInt], to: fieldPairInt },
+  (x) => x,
+  (out, x) => Fp.copy(out, x),
+  "wasm roundtrip pair"
+);
+
+eqivalentWasm(
+  { from: [fieldInt, fieldInt], to: fieldInt },
+  (x, y) => montmulReduce(x, y),
+  Fp.Wasm.multiplyNoFma,
+  "mul no fma"
+);

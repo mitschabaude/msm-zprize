@@ -271,7 +271,7 @@ function montmulNoFma(X: BigUint64Array, Y: BigUint64Array) {
       let mid = xiLo * Yhi[j] + xiHi * Ylo[j];
       let hi = xiHi * Yhi[j];
       Z[j] += lo + ((mid & mask26) << 26n);
-      Z[j + 1] += 2n * ((mid >> 26n) + hi);
+      Z[j + 1] += ((mid >> 26n) + hi) << 1n;
     }
 
     let qi = (Z[0] * pInv) & mask51;
@@ -283,7 +283,7 @@ function montmulNoFma(X: BigUint64Array, Y: BigUint64Array) {
       let mid = qiLo * PHi[j] + qiHi * PLo[j];
       let hi = qiHi * PHi[j];
       Z[j] += lo + ((mid & mask26) << 26n);
-      Z[j + 1] += 2n * ((mid >> 26n) + hi);
+      Z[j + 1] += ((mid >> 26n) + hi) << 1n;
     }
 
     Z[1] += Z[0] >> 51n;

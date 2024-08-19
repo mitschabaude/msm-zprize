@@ -42,6 +42,9 @@ async function benchmark(
     bench("multiply 51x5", Fp.Wasm.benchMultiply, { x, N }, 2);
     Fp.writePair(x, randomField(), randomField());
     bench("multiply 51x5", Fp.Wasm.benchMultiply, { x, N }, 2);
+
+    Fp.writePairI(x, randomField(), randomField());
+    bench("multiply 51x5 no fma", Fp.Wasm.benchMultiplyNoFma, { x, N }, 2);
   }
 
   for (let w of [29]) {
