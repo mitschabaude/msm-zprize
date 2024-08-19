@@ -90,8 +90,7 @@ function Multiply(
 
       // load y from memory into locals
       for (let i = 0; i < 5; i++) {
-        let xi = v128.load({ offset: i * 16 }, y);
-        local.set(Y[i], xi);
+        local.set(Y[i], v128.load({ offset: i * 16 }, y));
       }
 
       // initialize Z with constants that offset float64 prefixes
@@ -185,8 +184,7 @@ function Multiply(
 
       // load y from memory into locals
       for (let i = 0; i < 5; i++) {
-        let xi = v128.load({ offset: i * 16 }, y);
-        local.set(Y[i], xi);
+        local.set(Y[i], v128.load({ offset: i * 16 }, y));
       }
 
       // initialize Z with constants that offset float64 prefixes

@@ -47,8 +47,6 @@ function carryLocals(Z: Local<v128>[]) {
   local.set(Z[3], v128.and(Z[3], constI64x2(mask51)));
 }
 
-// TODO most of this doesn't work
-
 function arithmetic(p: bigint, pSelectPtr: Global<i32>) {
   let constants = {
     i64x2: i64x2Constants(p),
