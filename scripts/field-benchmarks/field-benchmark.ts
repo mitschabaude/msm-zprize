@@ -43,6 +43,9 @@ async function benchmark(
     Fp.writePair(x, randomField(), randomField());
     bench("multiply 51x5", Fp.Wasm.benchMultiply, { x, N }, 2);
 
+    Fp.writeSingle(x, randomField());
+    bench("multiply 51x5 single", Fp.Wasm.benchMultiplySingle, { x, N });
+
     Fp.writePairI(x, randomField(), randomField());
     bench("multiply 51x5 no fma", Fp.Wasm.benchMultiplyNoFma, { x, N }, 2);
   }

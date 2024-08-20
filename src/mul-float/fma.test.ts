@@ -217,3 +217,25 @@ eqivalentWasm(
   Fp.Wasm.multiplyNoFma,
   "mul no fma pairwise"
 );
+
+// single field element
+
+let fieldSingle = wasmSpec(Fp.Memory, fieldRng, {
+  size: Fp.sizeSingle,
+  there: (xPtr, x) => Fp.writeSingle(xPtr, x),
+  back: (x) => Fp.readSingle(x),
+});
+
+eqivalentWasm(
+  { from: [fieldSingle], to: fieldSingle },
+  (x) => x,
+  (out, x) => Fp.copySingle(out, x),
+  "wasm roundtrip single"
+);
+
+// eqivalentWasm(
+//   { from: [fieldSingle, fieldSingle], to: fieldSingle },
+//   (x, y) => montmulReduce(x, y),
+//   Fp.Wasm.multiplySingle,
+//   "mul single"
+// );

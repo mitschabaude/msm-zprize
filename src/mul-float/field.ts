@@ -21,6 +21,7 @@ type WasmIntf = {
   multiplyCarryConvert: (z: number, x: number, y: number) => void;
   multiplyReduceCarryConvert: (z: number, x: number, y: number) => void;
   multiplyNoFma: (z: number, x: number, y: number) => void;
+  multiplySingle: (z: number, x: number, y: number) => void;
 };
 
 async function createWasm(p: bigint, { memSize = 1 << 16 } = {}) {
@@ -33,11 +34,11 @@ async function createWasm(p: bigint, { memSize = 1 << 16 } = {}) {
     carry: true,
     convert: true,
   });
-  let { multiply: multiplyReduceCarryConvert, multiplyNoFma } = Multiply(
-    p,
-    pSelectPtr,
-    { reduce: true, carry: true, convert: true }
-  );
+  let {
+    multiply: multiplyReduceCarryConvert,
+    multiplyNoFma,
+    multiplySingle,
+  } = Multiply(p, pSelectPtr, { reduce: true, carry: true, convert: true });
 
   let multiplyModule = Module({
     memory: wasmMemory,
@@ -45,6 +46,7 @@ async function createWasm(p: bigint, { memSize = 1 << 16 } = {}) {
       multiplyCarryConvert,
       multiplyReduceCarryConvert,
       multiplyNoFma,
+      multiplySingle,
       ...implicitMemory.getExports(),
     },
   });
@@ -74,6 +76,7 @@ function pSelect(p: bigint, implicitMemory: ImplicitMemory) {
 
 class Field<Wasm> {
   size = sizeFieldPair;
+  sizeSingle = sizeField;
   static size = sizeFieldPair;
 
   constructor(
@@ -90,8 +93,11 @@ class Field<Wasm> {
     return createWasm(p);
   }
 
-  copy(x: number, y: number) {
-    this.memory.copyWithin(x, y, y + sizeFieldPair);
+  copy(x: number, y: number, size = sizeFieldPair) {
+    this.memory.copyWithin(x, y, y + size);
+  }
+  copySingle(x: number, y: number) {
+    this.copy(x, y, sizeField);
   }
 
   writePair(x: number, x0: bigint, x1: bigint) {
@@ -113,10 +119,10 @@ class Field<Wasm> {
   }
 
   // writes only one half of a pair and leaves the other as is
-  write(x: number, x0: bigint) {
+  write(x: number, x0: bigint, offsetBetween = 8) {
     let view = new DataView(this.memory.buffer, x, sizeFieldPair);
 
-    for (let offset = 0; offset < sizeFieldPair; offset += 16) {
+    for (let offset = 0; offset < sizeFieldPair; offset += 8 + offsetBetween) {
       view.setBigInt64(offset, (x0 & mask51) | c51n, true);
       let x0F = view.getFloat64(offset, true);
       view.setFloat64(offset, x0F - c51, true);
@@ -185,6 +191,15 @@ class Field<Wasm> {
     this.writeI(x + 8, x1);
   }
 
+  writeSingle(x: number, x0: bigint) {
+    let view = new DataView(this.memory.buffer, x, sizeField);
+
+    for (let offset = 0; offset < sizeField; offset += 8) {
+      view.setBigInt64(offset, x0 & mask51, true);
+      x0 >>= 51n;
+    }
+  }
+
   readPairI(x: number) {
     let view = new DataView(this.memory.buffer, x, sizeFieldPair);
     let x0 = 0n;
@@ -213,6 +228,16 @@ class Field<Wasm> {
   readSecondI(x: number) {
     return this.readI(x + 8);
   }
+
+  readSingle(x: number) {
+    let view = new DataView(this.memory.buffer, x, sizeField);
+    let x0 = 0n;
+    for (let offset = sizeField - 8; offset >= 0; offset -= 8) {
+      let x0I = view.getBigInt64(offset, true);
+      x0 = (x0 << 51n) | x0I;
+    }
+    return x0;
+  }
 }
 
 // version with benchmark scripts
@@ -220,6 +245,7 @@ class Field<Wasm> {
 type WasmIntfWithBenches = {
   benchMultiply: (x: number, N: number) => void;
   benchMultiplyNoFma: (x: number, N: number) => void;
+  benchMultiplySingle: (x: number, N: number) => void;
 };
 
 async function createWasmWithBenches(p: bigint) {
@@ -227,7 +253,7 @@ async function createWasmWithBenches(p: bigint) {
   let implicitMemory = new ImplicitMemory(wasmMemory);
   let pSelectPtr = pSelect(p, implicitMemory);
 
-  let { multiply, multiplyNoFma } = Multiply(p, pSelectPtr, {
+  let { multiply, multiplyNoFma, multiplySingle } = Multiply(p, pSelectPtr, {
     reduce: true,
     carry: true,
     convert: true,
@@ -250,9 +276,18 @@ async function createWasmWithBenches(p: bigint) {
     }
   );
 
+  const benchMultiplySingle = func(
+    { in: [i32, i32], locals: [i32], out: [] },
+    ([x, N], [i]) => {
+      forLoop1(i, 0, N, () => {
+        call(multiplySingle, [x, x, x]);
+      });
+    }
+  );
+
   let multiplyModule = Module({
     memory: wasmMemory,
-    exports: { benchMultiply, benchMultiplyNoFma },
+    exports: { benchMultiply, benchMultiplyNoFma, benchMultiplySingle },
   });
   let { instance } = await multiplyModule.instantiate();
 

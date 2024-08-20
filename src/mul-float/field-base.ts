@@ -31,11 +31,11 @@ export {
   bigintPairToData,
 };
 
-function constF64x2(x: number) {
-  return v128.const("f64x2", [x, x]);
+function constF64x2(x: number, y?: number) {
+  return v128.const("f64x2", [x, y ?? x]);
 }
-function constI64x2(x: bigint) {
-  return v128.const("i64x2", [x, x]);
+function constI64x2(x: bigint, y?: bigint) {
+  return v128.const("i64x2", [x, y ?? x]);
 }
 
 // inline methods to operate on a field element stored as n * w-bit limbs

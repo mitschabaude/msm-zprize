@@ -33,7 +33,7 @@ import {
 } from "./field-base.js";
 import { mask51 } from "./common.js";
 
-export { carryLocals, arithmetic, fieldHelpers };
+export { arithmetic, fieldHelpers, carryLocals, carryLocalsSingle };
 
 function carryLocals(Z: Local<v128>[]) {
   local.set(Z[1], i64x2.add(Z[1], i64x2.shr_s(Z[0], 51)));
@@ -45,6 +45,18 @@ function carryLocals(Z: Local<v128>[]) {
   local.set(Z[1], v128.and(Z[1], constI64x2(mask51)));
   local.set(Z[2], v128.and(Z[2], constI64x2(mask51)));
   local.set(Z[3], v128.and(Z[3], constI64x2(mask51)));
+}
+
+function carryLocalsSingle(Z: Local<i64>[]) {
+  local.set(Z[1], i64.add(Z[1], i64.shr_s(Z[0], 51n)));
+  local.set(Z[2], i64.add(Z[2], i64.shr_s(Z[1], 51n)));
+  local.set(Z[3], i64.add(Z[3], i64.shr_s(Z[2], 51n)));
+  local.set(Z[4], i64.add(Z[4], i64.shr_s(Z[3], 51n)));
+
+  local.set(Z[0], i64.and(Z[0], mask51));
+  local.set(Z[1], i64.and(Z[1], mask51));
+  local.set(Z[2], i64.and(Z[2], mask51));
+  local.set(Z[3], i64.and(Z[3], mask51));
 }
 
 function arithmetic(p: bigint, pSelectPtr: Global<i32>) {
@@ -106,6 +118,20 @@ function arithmetic(p: bigint, pSelectPtr: Global<i32>) {
     Field.forEach((i) => {
       loadLimb(pOr0, i);
       local.set(X[i], i64x2.sub(X[i], $));
+    });
+  }
+
+  function reduceLocalsSingle(X: Local<i64>[]) {
+    block(null, ($outer) => {
+      // return if x4 <= p4
+      // if not, x4 > p4 implies x > p
+      i64.le_s(X[4], PI[4]);
+      br_if($outer);
+
+      // if we're here, x > p but, by assumption, x < 2p, so do x - p
+      Field.forEach((i) => {
+        local.set(X[i], i64.sub(X[i], PI[i]));
+      });
     });
   }
 
@@ -199,6 +225,7 @@ function arithmetic(p: bigint, pSelectPtr: Global<i32>) {
     fullyReduceLaneLocals,
     reduceLaneLocals,
     reduceLocals,
+    reduceLocalsSingle,
   };
 }
 
