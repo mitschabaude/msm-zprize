@@ -22,7 +22,7 @@ import {
   randomBytes,
 } from "../../src/util.js";
 import { randomGenerators } from "../../src/bigint/field-random.js";
-import { createWasmWithBenches } from "../../src/mul-float/field.js";
+import { createWasmWithBenches } from "../../src/51x5/field.js";
 
 export { benchmark };
 
