@@ -25,6 +25,7 @@ import {
   type Func,
   Local,
   i8x16,
+  Type,
 } from "wasmati";
 import { inverse } from "../bigint/field.js";
 import {
@@ -44,6 +45,7 @@ import {
 import { constF64x2, constI64x2 } from "./field-base.js";
 import { arithmetic, carryLocals, carryLocalsSingle } from "./arith.js";
 import { assert } from "../util.js";
+import { forLoop, forLoop4 } from "../wasm/wasm-util.js";
 
 export { Multiply };
 
@@ -59,6 +61,11 @@ let hiCount = [0n, 1n, 2n, 3n, 4n, 5n, 4n, 3n, 2n, 1n];
 for (let i = 0; i < 10; i++) {
   zInitial[i] = -((2n * (hiCount[i] * hiPre + loCount[i] * loPre)) & mask64);
 }
+
+let shift26 = 1n << 26n;
+let mask26 = (1n << 26n) - 1n;
+let shift25 = 1n << 25n;
+let mask25 = (1n << 25n) - 1n;
 
 let nLocalsV128 = [v128, v128, v128, v128, v128] as const;
 
@@ -311,7 +318,7 @@ function Multiply(
    *
    * the layout in memory expected from x, y is (0, 1, 2, 3, 4) i.e. 5 consecutive 64-bit limbs
    */
-  let multiplySingle = func(
+  let multiplySingleSlow = func(
     {
       in: [i32, i32, i32], // pointers to z, x, y, where z = x * y
       out: [],
@@ -471,10 +478,130 @@ function Multiply(
     }
   );
 
-  let mask26 = (1n << 26n) - 1n;
   let PI = bigintToInt51Limbs(p);
   let Plo = PI.map((x) => x & mask26);
   let Phi = PI.map((x) => x >> 26n);
+
+  let localsI64 = (n: number) => Array<Type<i64>>(n).fill(i64);
+  let P = [...Plo].flatMap((lo, i) => [lo, Phi[i]]);
+
+  let pInv26 = inverse(-p, 1n << 26n);
+  let pInv25 = inverse(-p, 1n << 25n);
+
+  let multiplySingle = func(
+    {
+      in: [i32, i32, i32],
+      locals: [i64, i64, i64, i64, i32, ...localsI64(10), ...localsI64(9)],
+      out: [],
+    },
+    ([xy, x, y], [tmp, qi, xix2, xi, i, ...rest]) => {
+      let Y = rest.slice(0, 10);
+      let XY = rest.slice(10, 19);
+
+      // load y from memory into locals
+      for (let i = 0; i < 5; i++) {
+        local.set(xi, i64.load({ offset: i * 8 }, y));
+        local.set(Y[2 * i], i64.and(xi, mask26));
+        local.set(Y[2 * i + 1], i64.shr_s(xi, 26n));
+      }
+
+      forLoop({ incr: 8, i, start: 0, end: 5 }, () => {
+        // load x[2i] into local
+        local.set(xix2, i64.load({}, i32.add(x, i)));
+        local.set(xi, i64.and(xix2, mask26));
+
+        // j=0, compute q_i
+        // tmp = XY[0] + x[i]*y[0]
+        i64.add(i64.mul(xi, Y[0]), XY[0]);
+        local.set(tmp);
+        // qi = ((tmp & mask) * p') & mask (= 2^26 - (tmp & mask) for Pasta)
+        if (pInv26 === mask26) {
+          i64.sub(shift26, i64.and(tmp, mask26));
+        } else {
+          i64.and(i64.mul(i64.and(tmp, mask26), pInv26), mask26);
+        }
+        local.set(qi);
+        local.get(tmp);
+        // (stack, _) = tmp + qi*p[0] = tmp + (2^26 - (tmp & mask))*1 = ((tmp >> 26) + 1, _) for Pasta
+        addMul(qi, P[0]);
+        i64.shr_s($, 26n); // we just put carry on the stack, use it later
+
+        for (let j = 1; j < 9; j++) {
+          // XY[j-1] = XY[j] + x[i]*y[j] + qi*p[j]
+          local.get(XY[j]);
+          i64.mul(xi, Y[j]);
+          if (j === 1) i64.add();
+          i64.add();
+          addMul(qi, P[j]);
+          local.set(XY[j - 1]);
+        }
+        // XY[9] is never set, so we can save 1 addition compared to the loop
+        i64.mul(xi, Y[9]);
+        addMul(qi, P[9]);
+        local.set(XY[8]);
+
+        // now the same with x[2i + 1]
+        local.set(xi, i64.shr_s(xix2, 26n));
+
+        // j=0, compute q_i
+        // tmp = XY[0] + x[i]*y[0]
+        i64.add(i64.mul(xi, Y[0]), XY[0]);
+        local.set(tmp);
+        // qi = ((tmp & mask) * p') & mask (= 2^25 - (tmp & mask) for Pasta)
+        if ((pInv25 & mask25) === mask25) {
+          i64.sub(shift25, i64.and(tmp, mask25));
+        } else {
+          i64.and(i64.mul(i64.and(tmp, mask25), pInv25), mask25);
+        }
+        local.set(qi);
+        local.get(tmp);
+        // (stack, _) = tmp + qi*p[0] = tmp + (2^25 - (tmp & mask))*1 = ((tmp >> 25) + 1, _) for Pasta
+        addMul(qi, P[0]);
+        i64.shr_s($, 25n); // we just put carry on the stack, use it later
+
+        for (let j = 1; j < 9; j++) {
+          // XY[j-1] = XY[j] + x[i]*y[j] + qi*p[j]
+          i64.mul(xi, Y[j]);
+          if (j === 1) i64.add();
+          addMul(qi, P[j]);
+          if (j % 2 === 1) i64.shl($, 1n);
+          local.get(XY[j]);
+          i64.add();
+          local.set(XY[j - 1]);
+        }
+        // XY[9] is never set, so we can save 1 addition compared to the loop
+        i64.mul(xi, Y[9]);
+        addMul(qi, P[9]);
+        i64.shl($, 1n);
+        local.set(XY[8]);
+      });
+
+      // final pass of collecting carries, store output in memory
+      for (let i = 0; i < 4; i++) {
+        local.get(XY[2 * i]);
+        if (i > 0) i64.add(); // add carry
+
+        i64.and(XY[2 * i + 1], mask25);
+        i64.shl($, 26n);
+
+        i64.add();
+        local.set(tmp);
+
+        // store 51 bits at a time
+        i64.and(tmp, mask51);
+        i64.store({ offset: i * 8 }, xy, $);
+
+        // put carry on the stack
+        i64.shr_s(tmp, 51n);
+        i64.shr_s(XY[2 * i + 1], 25n);
+        i64.add();
+      }
+      // final iteration simpler because X[9] is not used
+      local.get(XY[8]);
+      i64.add(); // add carry
+      i64.store({ offset: 4 * 8 }, xy, $);
+    }
+  );
 
   /**
    * 51x5 multiplication without using FMA instructions, as a fallback for compatibility.
@@ -588,6 +715,16 @@ function swap64x2(z: Local<v128>) {
     z,
     v128.const("i8x16", [8, 9, 10, 11, 12, 13, 14, 15, 0, 1, 2, 3, 4, 5, 6, 7])
   );
+}
+
+function addMul(l: Local<i64>, c: bigint) {
+  if (c === 0n) return;
+  if (c === 1n) {
+    i64.add($, l);
+    return;
+  }
+  i64.mul(l, c);
+  i64.add();
 }
 
 // debugging helpers, currently unused

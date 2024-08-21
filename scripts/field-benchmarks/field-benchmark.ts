@@ -50,7 +50,7 @@ async function benchmark(
     bench("multiply 51x5 no fma", Fp.Wasm.benchMultiplyNoFma, { x, N }, 2);
   }
 
-  for (let w of [29]) {
+  for (let w of [26, 29]) {
     let { n } = montgomeryParams(p, w);
     let {
       benchMultiply: benchMontgomery,
