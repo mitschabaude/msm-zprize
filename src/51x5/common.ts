@@ -30,22 +30,22 @@ let bytes = new Uint8Array(8);
 let view = new DataView(bytes.buffer);
 
 // constants
-let mask25 = (1n << 25n) - 1n;
-let mask26 = (1n << 26n) - 1n;
-let mask51 = (1n << 51n) - 1n;
-let mask64 = (1n << 64n) - 1n;
+const mask25 = (1n << 25n) - 1n;
+const mask26 = (1n << 26n) - 1n;
+const mask51 = (1n << 51n) - 1n;
+const mask64 = (1n << 64n) - 1n;
 
-let c103 = 2 ** 103;
-let c52 = 2 ** 52;
-let c51 = 2 ** 52;
-let c51x3 = 3 * 2 ** 51;
-let c2 = c103 + c51x3;
+const c103 = 2 ** 103;
+const c52 = 2 ** 52;
+const c51 = 2 ** 52;
+const c51x3 = 3 * 2 ** 51;
+const c2 = c103 + c51x3;
 
 // constants we have to subtract after reinterpreting raw float bytes as int64
-let hiPre = numberToBigint64(c103);
-let loPre = numberToBigint64(c51x3);
-let c52n = numberToBigint64(c52);
-let c51n = numberToBigint64(c51);
+const hiPre = numberToBigint64(c103);
+const loPre = numberToBigint64(c51x3);
+const c52n = numberToBigint64(c52);
+const c51n = numberToBigint64(c51);
 
 // conversion between bigints and floats
 

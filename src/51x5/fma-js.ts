@@ -329,9 +329,11 @@ for (let i = 0; i < 5; i++) {
 
 // version that doesn't require fma instructions and close to fast wasm version
 function montmulNoFma2(X: BigUint64Array, Y51: BigUint64Array) {
-  let Z = new BigUint64Array(10);
   let Y = new BigUint64Array(10);
+  let Z = new BigUint64Array(9);
   let P = P10;
+  let pInv25 = inverse(-p, 1n << 25n);
+  let pInv26 = inverse(-p, 1n << 26n);
 
   // initialize Y
   for (let i = 0; i < 5; i++) {
@@ -341,38 +343,42 @@ function montmulNoFma2(X: BigUint64Array, Y51: BigUint64Array) {
   }
 
   for (let i = 0; i < 5; i++) {
+    let xi, qi, tmp;
+
     // LOWER HALF
-    let xiLo = X[i] & mask26;
+    xi = X[i] & mask26;
 
-    Z[0] += xiLo * Y[0];
-    let qiLo = (Z[0] * pInv) & mask26;
-    Z[1] += (Z[0] + qiLo * P[0]) >> 26n;
+    tmp = Z[0] + xi * Y[0];
+    qi = ((tmp & mask26) * pInv26) & mask26;
+    Z[1] += (tmp + qi * P[0]) >> 26n;
 
-    for (let j = 1; j < 10; j++) {
-      Z[j - 1] = Z[j] + xiLo * Y[j] + qiLo * P[j];
+    for (let j = 1; j < 9; j++) {
+      Z[j - 1] = Z[j] + xi * Y[j] + qi * P[j];
     }
+    Z[8] = xi * Y[9] + qi * P[9];
 
     // UPPER HALF
-    let xiHi = X[i] >> 26n;
+    xi = X[i] >> 26n;
 
-    Z[0] += xiHi * Y[0];
-    let qiHi = (Z[0] * pInv) & mask25;
-    Z[1] += (Z[0] + qiHi * P[0]) >> 25n;
+    tmp = Z[0] + xi * Y[0];
+    qi = ((tmp & mask25) * pInv25) & mask25;
+    Z[1] += (tmp + qi * P[0]) >> 25n;
 
-    for (let j = 1; j < 10; j++) {
-      let v = xiHi * Y[j] + qiHi * P[j];
+    for (let j = 1; j < 9; j++) {
+      let v = xi * Y[j] + qi * P[j];
       if (j % 2 === 1) v <<= 1n;
       Z[j - 1] = Z[j] + v;
     }
+    Z[8] = (xi * Y[9] + qi * P[9]) << 1n;
   }
 
   let carry = 0n;
   let Z51 = new BigUint64Array(5);
 
   for (let i = 0; i < 4; i++) {
-    let w = Z[2 * i] + carry + ((Z[2 * i + 1] & mask25) << 26n);
-    Z51[i] = w & mask51;
-    carry = (w >> 51n) + (Z[2 * i + 1] >> 25n);
+    let tmp = Z[2 * i] + carry + ((Z[2 * i + 1] & mask25) << 26n);
+    Z51[i] = tmp & mask51;
+    carry = (tmp >> 51n) + (Z[2 * i + 1] >> 25n);
   }
   Z51[4] = Z[8] + carry;
 

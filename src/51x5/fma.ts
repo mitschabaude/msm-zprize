@@ -496,7 +496,7 @@ function Multiply(
     },
     ([xy, x, y], [tmp, qi, xix2, xi, i, ...rest]) => {
       let Y = rest.slice(0, 10);
-      let XY = rest.slice(10, 19);
+      let Z = rest.slice(10, 19);
 
       // load y from memory into locals
       for (let i = 0; i < 5; i++) {
@@ -508,80 +508,58 @@ function Multiply(
       forLoop({ incr: 8, i, start: 0, end: 5 }, () => {
         // load x[2i] into local
         local.set(xix2, i64.load({}, i32.add(x, i)));
+
+        // LOWER HALF
         local.set(xi, i64.and(xix2, mask26));
 
-        // j=0, compute q_i
-        // tmp = XY[0] + x[i]*y[0]
-        i64.add(i64.mul(xi, Y[0]), XY[0]);
-        local.set(tmp);
-        // qi = ((tmp & mask) * p') & mask (= 2^26 - (tmp & mask) for Pasta)
-        if (pInv26 === mask26) {
-          i64.sub(shift26, i64.and(tmp, mask26));
-        } else {
-          i64.and(i64.mul(i64.and(tmp, mask26), pInv26), mask26);
-        }
-        local.set(qi);
+        local.set(tmp, i64.add(i64.mul(xi, Y[0]), Z[0]));
+        local.set(qi, i64.and(i64.mul(i64.and(tmp, mask26), pInv26), mask26));
         local.get(tmp);
-        // (stack, _) = tmp + qi*p[0] = tmp + (2^26 - (tmp & mask))*1 = ((tmp >> 26) + 1, _) for Pasta
         addMul(qi, P[0]);
-        i64.shr_s($, 26n); // we just put carry on the stack, use it later
+        i64.shr_s($, 26n);
 
         for (let j = 1; j < 9; j++) {
-          // XY[j-1] = XY[j] + x[i]*y[j] + qi*p[j]
-          local.get(XY[j]);
           i64.mul(xi, Y[j]);
           if (j === 1) i64.add();
-          i64.add();
           addMul(qi, P[j]);
-          local.set(XY[j - 1]);
+          local.get(Z[j]);
+          i64.add();
+          local.set(Z[j - 1]);
         }
-        // XY[9] is never set, so we can save 1 addition compared to the loop
         i64.mul(xi, Y[9]);
         addMul(qi, P[9]);
-        local.set(XY[8]);
+        local.set(Z[8]);
 
-        // now the same with x[2i + 1]
+        // UPPER HALF
         local.set(xi, i64.shr_s(xix2, 26n));
 
-        // j=0, compute q_i
-        // tmp = XY[0] + x[i]*y[0]
-        i64.add(i64.mul(xi, Y[0]), XY[0]);
-        local.set(tmp);
-        // qi = ((tmp & mask) * p') & mask (= 2^25 - (tmp & mask) for Pasta)
-        if ((pInv25 & mask25) === mask25) {
-          i64.sub(shift25, i64.and(tmp, mask25));
-        } else {
-          i64.and(i64.mul(i64.and(tmp, mask25), pInv25), mask25);
-        }
-        local.set(qi);
+        local.set(tmp, i64.add(i64.mul(xi, Y[0]), Z[0]));
+        local.set(qi, i64.and(i64.mul(i64.and(tmp, mask25), pInv25), mask25));
         local.get(tmp);
-        // (stack, _) = tmp + qi*p[0] = tmp + (2^25 - (tmp & mask))*1 = ((tmp >> 25) + 1, _) for Pasta
         addMul(qi, P[0]);
-        i64.shr_s($, 25n); // we just put carry on the stack, use it later
+        i64.shr_s($, 25n);
+        local.set(Z[1], i64.add($, Z[1]));
 
         for (let j = 1; j < 9; j++) {
-          // XY[j-1] = XY[j] + x[i]*y[j] + qi*p[j]
           i64.mul(xi, Y[j]);
-          if (j === 1) i64.add();
           addMul(qi, P[j]);
           if (j % 2 === 1) i64.shl($, 1n);
-          local.get(XY[j]);
+          local.get(Z[j]);
           i64.add();
-          local.set(XY[j - 1]);
+          local.set(Z[j - 1]);
         }
-        // XY[9] is never set, so we can save 1 addition compared to the loop
         i64.mul(xi, Y[9]);
         addMul(qi, P[9]);
         i64.shl($, 1n);
-        local.set(XY[8]);
+        local.set(Z[8]);
       });
 
       // final pass of collecting carries, store output in memory
       for (let i = 0; i < 4; i++) {
-        local.get(XY[2 * i]);
+        local.get(Z[2 * i]);
         if (i > 0) i64.add(); // add carry
 
-        i64.and(XY[2 * i + 1], mask25);
+        i64.and(Z[2 * i + 1], mask25);
         i64.shl($, 26n);
 
         i64.add();
@@ -593,11 +571,11 @@ function Multiply(
 
         // put carry on the stack
         i64.shr_s(tmp, 51n);
-        i64.shr_s(XY[2 * i + 1], 25n);
+        i64.shr_s(Z[2 * i + 1], 25n);
         i64.add();
       }
       // final iteration simpler because X[9] is not used
-      local.get(XY[8]);
+      local.get(Z[8]);
       i64.add(); // add carry
       i64.store({ offset: 4 * 8 }, xy, $);
     }
