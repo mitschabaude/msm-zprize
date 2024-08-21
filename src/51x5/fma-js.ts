@@ -27,6 +27,7 @@ import {
   c52n,
   hiPre,
   loPre,
+  mask25,
   mask51,
   mask64,
   numberToBigint64,
@@ -41,6 +42,8 @@ export {
   montMulFmaWrapped,
   montMulFmaWrapped2,
   montmulNoFmaWrapped,
+  montmulNoFma,
+  montmulNoFma2,
 };
 
 // bigint mul using float madd instruction
@@ -303,7 +306,12 @@ function montmulNoFma(X: BigUint64Array, Y: BigUint64Array) {
     Z[i] = lo;
   }
   assert(carry === 0n, `carry ${carry}`);
-  return Z;
+
+  let Z51 = new BigUint64Array(5);
+  for (let i = 0; i < 5; i++) {
+    Z51[i] = Z[i];
+  }
+  return Z51;
 }
 
 function montmulNoFmaWrapped(x: bigint, y: bigint) {
@@ -311,4 +319,62 @@ function montmulNoFmaWrapped(x: bigint, y: bigint) {
   let Y = bigintToInt51Limbs(y);
   let Z = montmulNoFma(X, Y);
   return bigintFromInt51Limbs(Z);
+}
+
+let P10 = new BigUint64Array(10);
+for (let i = 0; i < 5; i++) {
+  P10[2 * i] = PLo[i];
+  P10[2 * i + 1] = PHi[i];
+}
+
+// version that doesn't require fma instructions and close to fast wasm version
+function montmulNoFma2(X: BigUint64Array, Y51: BigUint64Array) {
+  let Z = new BigUint64Array(10);
+  let Y = new BigUint64Array(10);
+  let P = P10;
+
+  // initialize Y
+  for (let i = 0; i < 5; i++) {
+    let yi = Y51[i];
+    Y[2 * i] = yi & mask26;
+    Y[2 * i + 1] = yi >> 26n;
+  }
+
+  for (let i = 0; i < 5; i++) {
+    // LOWER HALF
+    let xiLo = X[i] & mask26;
+
+    Z[0] += xiLo * Y[0];
+    let qiLo = (Z[0] * pInv) & mask26;
+    Z[1] += (Z[0] + qiLo * P[0]) >> 26n;
+
+    for (let j = 1; j < 10; j++) {
+      Z[j - 1] = Z[j] + xiLo * Y[j] + qiLo * P[j];
+    }
+
+    // UPPER HALF
+    let xiHi = X[i] >> 26n;
+
+    Z[0] += xiHi * Y[0];
+    let qiHi = (Z[0] * pInv) & mask25;
+    Z[1] += (Z[0] + qiHi * P[0]) >> 25n;
+
+    for (let j = 1; j < 10; j++) {
+      let v = xiHi * Y[j] + qiHi * P[j];
+      if (j % 2 === 1) v <<= 1n;
+      Z[j - 1] = Z[j] + v;
+    }
+  }
+
+  let carry = 0n;
+  let Z51 = new BigUint64Array(5);
+
+  for (let i = 0; i < 4; i++) {
+    let w = Z[2 * i] + carry + ((Z[2 * i + 1] & mask25) << 26n);
+    Z51[i] = w & mask51;
+    carry = (w >> 51n) + (Z[2 * i + 1] >> 25n);
+  }
+  Z51[4] = Z[8] + carry;
+
+  return Z51;
 }

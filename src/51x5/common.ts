@@ -1,6 +1,20 @@
 import { bigintFromLimbs, bigintToLimbsRelaxed } from "../util.js";
 
-export { mask51, mask64, c103, c52, c51, c51x3, c2, hiPre, loPre, c52n, c51n };
+export {
+  mask25,
+  mask26,
+  mask51,
+  mask64,
+  c103,
+  c52,
+  c51,
+  c51x3,
+  c2,
+  hiPre,
+  loPre,
+  c52n,
+  c51n,
+};
 export {
   numberToBigint64,
   bigint64ToNumber,
@@ -16,6 +30,8 @@ let bytes = new Uint8Array(8);
 let view = new DataView(bytes.buffer);
 
 // constants
+let mask25 = (1n << 25n) - 1n;
+let mask26 = (1n << 26n) - 1n;
 let mask51 = (1n << 51n) - 1n;
 let mask64 = (1n << 64n) - 1n;
 

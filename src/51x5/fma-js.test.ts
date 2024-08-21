@@ -19,12 +19,15 @@ import {
   montmul,
   montMulFmaWrapped,
   montMulFmaWrapped2,
+  montmulNoFma,
+  montmulNoFma2,
   montmulNoFmaWrapped,
   montmulRef,
   montmulSimple,
 } from "./fma-js.js";
 import {
   bigint64ToNumber,
+  bigintToInt51Limbs,
   float52ToInt64,
   int64ToFloat52,
   numberToBigint64,
@@ -132,4 +135,17 @@ equivalent({ from: [field, field], to: fieldStrict, verbose: true })(
   montmul,
   montmulNoFmaWrapped,
   "montmul no fma (js)"
+);
+
+// different versions of mul w/o fma
+let limbs = spec(Random.map(field.rng, bigintToInt51Limbs), {
+  assertEqual(x, y, message) {
+    assertDeepEqual([...x], [...y], message);
+  },
+});
+
+equivalent({ from: [limbs, limbs], to: limbs, verbose: true })(
+  montmulNoFma,
+  montmulNoFma2,
+  "montmul no fma2 (js)"
 );
