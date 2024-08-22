@@ -502,10 +502,10 @@ function Multiply(
     func(
       {
         in: [i32, i32, i32],
-        locals: [i64, i64, i64, i64, i32, ...localsI64(10), ...localsI64(9)],
+        locals: [i64, i64, i64, i64, ...localsI64(10), ...localsI64(9)],
         out: [],
       },
-      ([xy, x, y], [tmp, qi, xix2, xi, i, ...rest]) => {
+      ([xy, x, y], [tmp, qi, xix2, xi, ...rest]) => {
         let Y = rest.slice(0, 10);
         let Z = rest.slice(10, 19);
 
@@ -516,9 +516,7 @@ function Multiply(
           local.set(Y[2 * i + 1], i64.shr_s(xi, 26n));
         }
 
-        // forLoop({ incr: 8, i, start: 0, end: 5 }, () => {
         for (let i = 0; i < 5; i++) {
-          // local.set(xix2, i64.load({}, i32.add(x, i)));
           local.set(xix2, i64.load({ offset: i * limbGap + limbOffset }, x));
 
           // LOWER HALF
@@ -564,7 +562,6 @@ function Multiply(
           addMul(qi, P[9]);
           i64.shl($, 1n);
           local.set(Z[8]);
-          // });
         }
 
         // final pass of collecting carries, store output in memory
@@ -625,18 +622,10 @@ function Multiply(
   let multiplyNoFmaSimd = func(
     {
       in: [i32, i32, i32],
-      locals: [
-        v128,
-        v128,
-        v128,
-        v128,
-        i32,
-        ...localsV128(10),
-        ...localsV128(9),
-      ],
+      locals: [v128, v128, v128, v128, ...localsV128(10), ...localsV128(9)],
       out: [],
     },
-    ([xy, x, y], [tmp, qi, xix2, xi, i, ...rest]) => {
+    ([xy, x, y], [tmp, qi, xix2, xi, ...rest]) => {
       let Y = rest.slice(0, 10);
       let Z = rest.slice(10, 19);
 
@@ -647,9 +636,7 @@ function Multiply(
         local.set(Y[2 * i + 1], i64x2.shr_s(xi, 26));
       }
 
-      // forLoop({ incr: 16, i, start: 0, end: 5 }, () => {
       for (let i = 0; i < 5; i++) {
-        // local.set(xix2, v128.load({}, i32.add(x, i)));
         local.set(xix2, v128.load({ offset: i * 16 }, x));
 
         // LOWER HALF
@@ -695,7 +682,6 @@ function Multiply(
         addMulx2(qi, P[9]);
         i64x2.shl($, 1);
         local.set(Z[8]);
-        // });
       }
 
       // final pass of collecting carries, store output in memory
