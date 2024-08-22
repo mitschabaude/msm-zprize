@@ -18,8 +18,8 @@ function validateAssumptions(modulus: bigint) {
 }
 
 type WasmIntf = {
-  multiplyCarryConvert: (z: number, x: number, y: number) => void;
-  multiplyReduceCarryConvert: (z: number, x: number, y: number) => void;
+  multiplyCarry: (z: number, x: number, y: number) => void;
+  multiplyReduceCarry: (z: number, x: number, y: number) => void;
   multiplyNoFma: (z: number, x: number, y: number) => void;
   multiplySingle: (z: number, x: number, y: number) => void;
 };
@@ -29,22 +29,20 @@ async function createWasm(p: bigint, { memSize = 1 << 16 } = {}) {
   let implicitMemory = new ImplicitMemory(wasmMemory);
   let pSelectPtr = pSelect(p, implicitMemory);
 
-  let { multiply: multiplyCarryConvert } = Multiply(p, pSelectPtr, {
+  let { multiply: multiplyCarry } = Multiply(p, pSelectPtr, {
     reduce: false,
-    carry: true,
-    convert: true,
   });
   let {
-    multiply: multiplyReduceCarryConvert,
+    multiply: multiplyReduceCarry,
     multiplyNoFma,
     multiplySingle,
-  } = Multiply(p, pSelectPtr, { reduce: true, carry: true, convert: true });
+  } = Multiply(p, pSelectPtr, { reduce: true });
 
   let multiplyModule = Module({
     memory: wasmMemory,
     exports: {
-      multiplyCarryConvert,
-      multiplyReduceCarryConvert,
+      multiplyCarry,
+      multiplyReduceCarry,
       multiplyNoFma,
       multiplySingle,
       ...implicitMemory.getExports(),
@@ -100,7 +98,7 @@ class Field<Wasm> {
     this.copy(x, y, sizeField);
   }
 
-  writePair(x: number, x0: bigint, x1: bigint) {
+  writePairF(x: number, x0: bigint, x1: bigint) {
     let view = new DataView(this.memory.buffer, x, sizeFieldPair);
 
     for (let offset = 0; offset < sizeFieldPair; offset += 16) {
@@ -119,7 +117,7 @@ class Field<Wasm> {
   }
 
   // writes only one half of a pair and leaves the other as is
-  write(x: number, x0: bigint, offsetBetween = 8) {
+  writeF(x: number, x0: bigint, offsetBetween = 8) {
     let view = new DataView(this.memory.buffer, x, sizeFieldPair);
 
     for (let offset = 0; offset < sizeFieldPair; offset += 8 + offsetBetween) {
@@ -130,11 +128,11 @@ class Field<Wasm> {
     }
   }
 
-  writeSecond(x: number, x1: bigint) {
-    this.write(x + 8, x1);
+  writeSecondF(x: number, x1: bigint) {
+    this.writeF(x + 8, x1);
   }
 
-  readPair(x: number) {
+  readPairF(x: number) {
     let view = new DataView(this.memory.buffer, x, sizeFieldPair);
     let x0 = 0n;
     let x1 = 0n;
@@ -149,7 +147,7 @@ class Field<Wasm> {
     return [x0, x1] satisfies Tuple;
   }
 
-  read(x: number) {
+  readF(x: number) {
     let view = new DataView(this.memory.buffer, x, sizeFieldPair);
     let x0 = 0n;
     for (let offset = sizeFieldPair - 16; offset >= 0; offset -= 16) {
@@ -159,13 +157,13 @@ class Field<Wasm> {
     return x0;
   }
 
-  readSecond(x: number) {
-    return this.read(x + 8);
+  readSecondF(x: number) {
+    return this.readF(x + 8);
   }
 
   // version of read/write methods that work with int64s
 
-  writePairI(x: number, x0: bigint, x1: bigint) {
+  writePair(x: number, x0: bigint, x1: bigint) {
     let view = new DataView(this.memory.buffer, x, sizeFieldPair);
 
     for (let offset = 0; offset < sizeFieldPair; offset += 16) {
@@ -178,7 +176,7 @@ class Field<Wasm> {
   }
 
   // writes only one half of a pair and leaves the other as is
-  writeI(x: number, x0: bigint) {
+  write(x: number, x0: bigint) {
     let view = new DataView(this.memory.buffer, x, sizeFieldPair);
 
     for (let offset = 0; offset < sizeFieldPair; offset += 16) {
@@ -187,8 +185,8 @@ class Field<Wasm> {
     }
   }
 
-  writeSecondI(x: number, x1: bigint) {
-    this.writeI(x + 8, x1);
+  writeSecond(x: number, x1: bigint) {
+    this.write(x + 8, x1);
   }
 
   writeSingle(x: number, x0: bigint) {
@@ -200,7 +198,7 @@ class Field<Wasm> {
     }
   }
 
-  readPairI(x: number) {
+  readPair(x: number) {
     let view = new DataView(this.memory.buffer, x, sizeFieldPair);
     let x0 = 0n;
     let x1 = 0n;
@@ -215,7 +213,7 @@ class Field<Wasm> {
     return [x0, x1] satisfies Tuple;
   }
 
-  readI(x: number) {
+  read(x: number) {
     let view = new DataView(this.memory.buffer, x, sizeFieldPair);
     let x0 = 0n;
     for (let offset = sizeFieldPair - 16; offset >= 0; offset -= 16) {
@@ -225,8 +223,8 @@ class Field<Wasm> {
     return x0;
   }
 
-  readSecondI(x: number) {
-    return this.readI(x + 8);
+  readSecond(x: number) {
+    return this.read(x + 8);
   }
 
   readSingle(x: number) {
@@ -256,7 +254,6 @@ async function createWasmWithBenches(p: bigint) {
   let { multiply, multiplyNoFma, multiplySingle } = Multiply(p, pSelectPtr, {
     reduce: true,
     carry: true,
-    convert: true,
   });
 
   const benchMultiply = func(

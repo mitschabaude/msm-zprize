@@ -15,22 +15,12 @@ import { Random } from "../testing/random.js";
 import { createEquivalentWasm, wasmSpec } from "../testing/equivalent-wasm.js";
 import { montmulWrapped, montMulFmaWrapped } from "./fma-js.js";
 import { Field } from "./field.js";
-import { writeWat } from "../wasm/wat-helpers.js";
-
-const doWrite = true;
 
 let p = pallasParams.modulus;
 let R = (1n << 255n) % p;
 
 const Fp = await Field.create(p);
 let Local = Fp.Memory.local;
-
-if (doWrite && Fp.moduleBytes) {
-  await writeWat(
-    import.meta.url.slice(7).replace(".ts", ".wat").replace(".js", ".wat"),
-    Fp.moduleBytes
-  );
-}
 
 // manual simple test
 {
@@ -40,7 +30,7 @@ if (doWrite && Fp.moduleBytes) {
 
   Fp.writePair(x, 1n, 1n);
   Fp.writePair(y, R, 1n);
-  Fp.Wasm.multiplyCarryConvert(z, x, y);
+  Fp.Wasm.multiplyCarry(z, x, y);
 
   let [z00, z01] = Fp.readPair(z);
   let z10 = montMulFmaWrapped(1n, R);
@@ -53,10 +43,10 @@ if (doWrite && Fp.moduleBytes) {
   assertDeepEqual(Fp.read(z), z10, "read");
   assertDeepEqual(Fp.readSecond(z), z11, "read 2nd");
 
-  Fp.write(z, 2n);
-  Fp.writeSecond(x, 3n);
-  assertDeepEqual(Fp.read(z), 2n, "write");
-  assertDeepEqual(Fp.readSecond(x), 3n, "write");
+  Fp.writeF(z, 2n);
+  Fp.writeSecondF(x, 3n);
+  assertDeepEqual(Fp.readF(z), 2n, "write");
+  assertDeepEqual(Fp.readSecondF(x), 3n, "write");
 }
 
 // property tests
@@ -95,7 +85,7 @@ eqivalentWasm(
 eqivalentWasm(
   { from: [field, field], to: field },
   montMulFmaWrapped,
-  Fp.Wasm.multiplyCarryConvert,
+  Fp.Wasm.multiplyCarry,
   "mul fma"
 );
 
@@ -105,7 +95,7 @@ eqivalentWasm(
     montMulFmaWrapped(x[0], y[0]),
     montMulFmaWrapped(x[1], y[1]),
   ],
-  Fp.Wasm.multiplyCarryConvert,
+  Fp.Wasm.multiplyCarry,
   "mul fma pairwise"
 );
 
@@ -122,7 +112,7 @@ function montmulReduce(x: bigint, y: bigint) {
 eqivalentWasm(
   { from: [field, field], to: field },
   montmulReduce,
-  Fp.Wasm.multiplyReduceCarryConvert,
+  Fp.Wasm.multiplyReduceCarry,
   "mul reduce"
 );
 
@@ -132,7 +122,7 @@ eqivalentWasm(
     montmulReduce(x[0], y[0]),
     montmulReduce(x[1], y[1]),
   ],
-  Fp.Wasm.multiplyReduceCarryConvert,
+  Fp.Wasm.multiplyReduceCarry,
   "mul reduce pairwise"
 );
 
@@ -150,7 +140,7 @@ eqivalentWasm(
   (z, x) => {
     Fp.copy(z, x);
     for (let i = 0; i < 1000; i++) {
-      Fp.Wasm.multiplyReduceCarryConvert(z, z, x);
+      Fp.Wasm.multiplyReduceCarry(z, z, x);
     }
   },
   "mul reduce 1000"
@@ -166,7 +156,7 @@ eqivalentWasm(
   },
   (z, x) => {
     for (let i = 0; i < 1000; i++) {
-      Fp.Wasm.multiplyReduceCarryConvert(x, x, x);
+      Fp.Wasm.multiplyReduceCarry(x, x, x);
     }
     Fp.copy(z, x);
   },
@@ -175,41 +165,15 @@ eqivalentWasm(
 
 // wasm mul without fma
 
-let fieldInt = wasmSpec(Fp.Memory, fieldRng, {
-  size: Fp.size,
-  there: (xPtr, x) => Fp.writeI(xPtr, x),
-  back: (x) => Fp.readI(x),
-});
-
-let fieldPairInt = wasmSpec(Fp.Memory, Random.tuple([fieldRng, fieldRng]), {
-  size: Fp.size,
-  there: (xPtr, [x0, x1]) => Fp.writePairI(xPtr, x0, x1),
-  back: (x) => Fp.readPairI(x),
-});
-
 eqivalentWasm(
-  { from: [fieldInt], to: fieldInt },
-  (x) => x,
-  (out, x) => Fp.copy(out, x),
-  "wasm roundtrip"
-);
-
-eqivalentWasm(
-  { from: [fieldPairInt], to: fieldPairInt },
-  (x) => x,
-  (out, x) => Fp.copy(out, x),
-  "wasm roundtrip pair"
-);
-
-eqivalentWasm(
-  { from: [fieldInt, fieldInt], to: fieldInt },
+  { from: [field, field], to: field },
   (x, y) => montMulFmaWrapped(x, y),
   Fp.Wasm.multiplyNoFma,
   "mul no fma"
 );
 
 eqivalentWasm(
-  { from: [fieldPairInt, fieldPairInt], to: fieldPairInt },
+  { from: [fieldPair, fieldPair], to: fieldPair },
   (x, y): [bigint, bigint] => [
     montMulFmaWrapped(x[0], y[0]),
     montMulFmaWrapped(x[1], y[1]),

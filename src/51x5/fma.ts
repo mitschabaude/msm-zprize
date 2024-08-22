@@ -80,7 +80,8 @@ function Multiply(
   {
     reduce = false,
     carry = true,
-    convert = true,
+    convertInputs = true,
+    convertOutput = false,
   }: {
     /**
      * Whether to optionally subtract p to bring the result back into a range < p + eps with eps << p
@@ -91,16 +92,20 @@ function Multiply(
      */
     carry?: boolean;
     /**
+     * Whether to convert the inputs to float64
+     */
+    convertInputs?: boolean;
+    /**
      * Whether to convert the result back to a float64
      */
-    convert?: boolean;
+    convertOutput?: boolean;
   } = {}
 ): Multiply {
   let pInv = inverse(-p, 1n << 51n);
   let PF = bigintToFloat51Limbs(p);
 
   // if we convert the output to float64, we need to carry as well
-  assert(!convert || carry, "must carry if converting to float64");
+  assert(!convertOutput || carry, "must carry if converting output to float64");
 
   let { reduceLocals, reduceLocalsSingle } = arithmetic(p, pSelectPtr);
 
@@ -196,8 +201,7 @@ function Multiply(
       if (reduce) reduceLocals(Z, carry, idx);
       if (carry) carryLocals(Z);
 
-      // convert to f64
-      if (convert)
+      if (convertOutput)
         for (let i = 0; i < 5; i++) {
           i64x2.add(Z[i], constI64x2(c52n));
           f64x2.sub($, constF64x2(c52));
@@ -226,7 +230,12 @@ function Multiply(
 
       // load y from memory into locals
       for (let i = 0; i < 5; i++) {
-        local.set(Y[i], v128.load({ offset: i * 16 }, y));
+        v128.load({ offset: i * 16 }, y);
+        if (convertInputs) {
+          i64x2.add($, constI64x2(c52n));
+          f64x2.sub($, constF64x2(c52));
+        }
+        local.set(Y[i]);
       }
 
       // initialize Z with constants that offset float64 prefixes
@@ -236,7 +245,12 @@ function Multiply(
 
       for (let i = 0; i < 5; i++) {
         let xi = tmp;
-        local.set(xi, v128.load({ offset: i * 16 }, x));
+        v128.load({ offset: i * 16 }, x);
+        if (convertInputs) {
+          i64x2.add($, constI64x2(c52n));
+          f64x2.sub($, constF64x2(c52));
+        }
+        local.set(xi);
 
         for (let j = 0; j < 5; j++)
           local.set(LH[j], f64x2.relaxed_madd(xi, Y[j], constF64x2(c103))); // hi
@@ -282,7 +296,7 @@ function Multiply(
       if (carry) carryLocals(Z);
 
       // convert output to f64
-      if (convert)
+      if (convertOutput)
         for (let i = 0; i < 5; i++) {
           i64x2.add(Z[i], constI64x2(c52n));
           f64x2.sub($, constF64x2(c52));
@@ -307,7 +321,7 @@ function Multiply(
 
   // sadly this is not significantly faster than the x2 version
   // missing from wasm:
-  // -) f64.relaced_madd
+  // -) f64.relaxed_madd
   // -) i64.reinterpret_f64
   let multiplySingleFma = func(
     {
@@ -561,8 +575,7 @@ function Multiply(
       if (reduce) reduceLocalsSingle(Z5);
       if (carry) carryLocalsSingle(Z5);
 
-      // convert output to f64
-      if (convert)
+      if (convertOutput)
         for (let i = 0; i < 5; i++) {
           i64.add(Z5[i], c52n);
           i64x2.splat();
