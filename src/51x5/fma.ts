@@ -92,11 +92,17 @@ function Multiply(
      */
     carry?: boolean;
     /**
-     * Whether to convert the inputs to float64
+     * Whether to convert the inputs from i64 to f64
+     *
+     * Note: by default this is `true`, and multiplication goes from i64 x i64 -> i64 limbs
+     * Toggling it false makes it f64 x f64 -> i64.
      */
     convertInputs?: boolean;
     /**
-     * Whether to convert the result back to a float64
+     * Whether to convert the result from i64 to f64
+     *
+     * Note: by default this is `false`, and multiplication goes from i64 x i64 -> i64 limbs
+     * Toggling it true makes it i64 x i64 -> f64
      */
     convertOutput?: boolean;
   } = {}

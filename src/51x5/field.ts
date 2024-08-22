@@ -1,4 +1,4 @@
-import { call, func, i32, importFunc, importMemory, Module } from "wasmati";
+import { call, func, i32, importMemory, Module } from "wasmati";
 import { MemoryHelpers, memoryHelpers } from "../wasm/memory-helpers.js";
 import { Tuple } from "../types.js";
 import { float52ToInt64, mask51, c51, c51n } from "./common.js";
