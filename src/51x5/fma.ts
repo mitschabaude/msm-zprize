@@ -498,95 +498,110 @@ function Multiply(
     return i64.and(i64.mul(i64.and(z, mask), pInv), mask);
   }
 
-  let multiplySingle = func(
+  let multiplySingle = (limbGap: number, limbOffset: number) =>
+    func(
+      {
+        in: [i32, i32, i32],
+        locals: [i64, i64, i64, i64, i32, ...localsI64(10), ...localsI64(9)],
+        out: [],
+      },
+      ([xy, x, y], [tmp, qi, xix2, xi, i, ...rest]) => {
+        let Y = rest.slice(0, 10);
+        let Z = rest.slice(10, 19);
+
+        // load y from memory into locals
+        for (let i = 0; i < 5; i++) {
+          local.set(xi, i64.load({ offset: i * limbGap + limbOffset }, y));
+          local.set(Y[2 * i], i64.and(xi, mask26));
+          local.set(Y[2 * i + 1], i64.shr_s(xi, 26n));
+        }
+
+        // forLoop({ incr: 8, i, start: 0, end: 5 }, () => {
+        for (let i = 0; i < 5; i++) {
+          // local.set(xix2, i64.load({}, i32.add(x, i)));
+          local.set(xix2, i64.load({ offset: i * limbGap + limbOffset }, x));
+
+          // LOWER HALF
+          local.set(xi, i64.and(xix2, mask26));
+
+          local.set(tmp, i64.add(i64.mul(xi, Y[0]), Z[0]));
+          local.set(qi, computeQ(tmp, pInv26, mask26));
+          local.get(tmp);
+          addMul(qi, P[0]);
+          i64.shr_s($, 26n);
+
+          for (let j = 1; j < 9; j++) {
+            i64.mul(xi, Y[j]);
+            if (j === 1) i64.add();
+            addMul(qi, P[j]);
+            local.get(Z[j]);
+            i64.add();
+            local.set(Z[j - 1]);
+          }
+          i64.mul(xi, Y[9]);
+          addMul(qi, P[9]);
+          local.set(Z[8]);
+
+          // UPPER HALF
+          local.set(xi, i64.shr_s(xix2, 26n));
+
+          local.set(tmp, i64.add(i64.mul(xi, Y[0]), Z[0]));
+          local.set(qi, computeQ(tmp, pInv25, mask25));
+          local.get(tmp);
+          addMul(qi, P[0]);
+          i64.shr_s($, 25n);
+          local.set(Z[1], i64.add($, Z[1]));
+
+          for (let j = 1; j < 9; j++) {
+            i64.mul(xi, Y[j]);
+            addMul(qi, P[j]);
+            if (j % 2 === 1) i64.shl($, 1n);
+            local.get(Z[j]);
+            i64.add();
+            local.set(Z[j - 1]);
+          }
+          i64.mul(xi, Y[9]);
+          addMul(qi, P[9]);
+          i64.shl($, 1n);
+          local.set(Z[8]);
+          // });
+        }
+
+        // final pass of collecting carries, store output in memory
+        for (let i = 0; i < 4; i++) {
+          local.get(Z[2 * i]);
+          if (i > 0) i64.add(); // add carry
+          i64.and(Z[2 * i + 1], mask25);
+          i64.shl($, 26n);
+          local.set(tmp, i64.add());
+
+          // store 51 bits at a time
+          i64.and(tmp, mask51);
+          i64.store({ offset: i * limbGap + limbOffset }, xy, $);
+
+          // put carry on the stack
+          i64.shr_s(tmp, 51n);
+          i64.shr_s(Z[2 * i + 1], 25n);
+          i64.add();
+        }
+        // final iteration simpler because X[9] is not used
+        local.get(Z[8]);
+        i64.add(); // add carry
+        i64.store({ offset: 4 * limbGap + limbOffset }, xy, $);
+      }
+    );
+
+  let multiplyNoFma0 = multiplySingle(16, 0);
+  let multiplyNoFma1 = multiplySingle(16, 8);
+
+  let multiplyNoFma = func(
     {
       in: [i32, i32, i32],
-      locals: [i64, i64, i64, i64, i32, ...localsI64(10), ...localsI64(9)],
       out: [],
     },
-    ([xy, x, y], [tmp, qi, xix2, xi, i, ...rest]) => {
-      let Y = rest.slice(0, 10);
-      let Z = rest.slice(10, 19);
-
-      // load y from memory into locals
-      for (let i = 0; i < 5; i++) {
-        local.set(xi, i64.load({ offset: i * 8 }, y));
-        local.set(Y[2 * i], i64.and(xi, mask26));
-        local.set(Y[2 * i + 1], i64.shr_s(xi, 26n));
-      }
-
-      // forLoop({ incr: 8, i, start: 0, end: 5 }, () => {
-      for (let i = 0; i < 5; i++) {
-        // local.set(xix2, i64.load({}, i32.add(x, i)));
-        local.set(xix2, i64.load({ offset: i * 8 }, x));
-
-        // LOWER HALF
-        local.set(xi, i64.and(xix2, mask26));
-
-        local.set(tmp, i64.add(i64.mul(xi, Y[0]), Z[0]));
-        local.set(qi, computeQ(tmp, pInv26, mask26));
-        local.get(tmp);
-        addMul(qi, P[0]);
-        i64.shr_s($, 26n);
-
-        for (let j = 1; j < 9; j++) {
-          i64.mul(xi, Y[j]);
-          if (j === 1) i64.add();
-          addMul(qi, P[j]);
-          local.get(Z[j]);
-          i64.add();
-          local.set(Z[j - 1]);
-        }
-        i64.mul(xi, Y[9]);
-        addMul(qi, P[9]);
-        local.set(Z[8]);
-
-        // UPPER HALF
-        local.set(xi, i64.shr_s(xix2, 26n));
-
-        local.set(tmp, i64.add(i64.mul(xi, Y[0]), Z[0]));
-        local.set(qi, computeQ(tmp, pInv25, mask25));
-        local.get(tmp);
-        addMul(qi, P[0]);
-        i64.shr_s($, 25n);
-        local.set(Z[1], i64.add($, Z[1]));
-
-        for (let j = 1; j < 9; j++) {
-          i64.mul(xi, Y[j]);
-          addMul(qi, P[j]);
-          if (j % 2 === 1) i64.shl($, 1n);
-          local.get(Z[j]);
-          i64.add();
-          local.set(Z[j - 1]);
-        }
-        i64.mul(xi, Y[9]);
-        addMul(qi, P[9]);
-        i64.shl($, 1n);
-        local.set(Z[8]);
-        // });
-      }
-
-      // final pass of collecting carries, store output in memory
-      for (let i = 0; i < 4; i++) {
-        local.get(Z[2 * i]);
-        if (i > 0) i64.add(); // add carry
-        i64.and(Z[2 * i + 1], mask25);
-        i64.shl($, 26n);
-        local.set(tmp, i64.add());
-
-        // store 51 bits at a time
-        i64.and(tmp, mask51);
-        i64.store({ offset: i * 8 }, xy, $);
-
-        // put carry on the stack
-        i64.shr_s(tmp, 51n);
-        i64.shr_s(Z[2 * i + 1], 25n);
-        i64.add();
-      }
-      // final iteration simpler because X[9] is not used
-      local.get(Z[8]);
-      i64.add(); // add carry
-      i64.store({ offset: 4 * 8 }, xy, $);
+    ([xy, x, y]) => {
+      call(multiplyNoFma0, [xy, x, y]);
+      call(multiplyNoFma1, [xy, x, y]);
     }
   );
 
@@ -607,7 +622,7 @@ function Multiply(
 
   let localsV128 = (n: number) => Array<Type<v128>>(n).fill(v128);
 
-  let multiplyNoFma = func(
+  let multiplyNoFmaSimd = func(
     {
       in: [i32, i32, i32],
       locals: [
@@ -811,7 +826,7 @@ function Multiply(
     }
   );
 
-  return { multiply, multiplyNoFma, multiplySingle };
+  return { multiply, multiplyNoFma, multiplySingle: multiplySingle(8, 0) };
 }
 
 function swap64x2(z: Local<v128>) {
