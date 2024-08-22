@@ -327,7 +327,7 @@ for (let i = 0; i < 5; i++) {
   P10[2 * i + 1] = PHi[i];
 }
 
-// version that doesn't require fma instructions and close to fast wasm version
+// version that doesn't require fma instructions and is close to fast wasm version
 function montmulNoFma2(X: BigUint64Array, Y51: BigUint64Array) {
   let Y = new BigUint64Array(10);
   let Z = new BigUint64Array(9);
@@ -349,7 +349,7 @@ function montmulNoFma2(X: BigUint64Array, Y51: BigUint64Array) {
     xi = X[i] & mask26;
 
     tmp = Z[0] + xi * Y[0];
-    qi = ((tmp & mask26) * pInv26) & mask26;
+    qi = computeQ(tmp, pInv26, mask26);
     Z[1] += (tmp + qi * P[0]) >> 26n;
 
     for (let j = 1; j < 9; j++) {
@@ -361,7 +361,7 @@ function montmulNoFma2(X: BigUint64Array, Y51: BigUint64Array) {
     xi = X[i] >> 26n;
 
     tmp = Z[0] + xi * Y[0];
-    qi = ((tmp & mask25) * pInv25) & mask25;
+    qi = computeQ(tmp, pInv25, mask25);
     Z[1] += (tmp + qi * P[0]) >> 25n;
 
     for (let j = 1; j < 9; j++) {
@@ -383,4 +383,13 @@ function montmulNoFma2(X: BigUint64Array, Y51: BigUint64Array) {
   Z51[4] = Z[8] + carry;
 
   return Z51;
+}
+
+function computeQ(z: bigint, pInv: bigint, mask: bigint) {
+  if (pInv === mask) {
+    // p = 1 mod 2^w  <==> -p^(-1) = -1 mod 2^w
+    // qi = z * (-1) % 2^w = 2^w - z % 2^w
+    return (mask + 1n - z) & mask;
+  }
+  return ((z & mask) * pInv) & mask;
 }

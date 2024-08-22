@@ -26,6 +26,7 @@ import {
   Local,
   i8x16,
   Type,
+  Input,
 } from "wasmati";
 import { inverse } from "../bigint/field.js";
 import {
@@ -488,6 +489,15 @@ function Multiply(
   let pInv26 = inverse(-p, 1n << 26n);
   let pInv25 = inverse(-p, 1n << 25n);
 
+  function computeQ(z: Input<i64>, pInv: bigint, mask: bigint) {
+    if (pInv === mask) {
+      // p = 1 mod 2^w  <==> -p^(-1) = -1 mod 2^w
+      // qi = z * (-1) % 2^w = (2^w - z) % 2^w
+      return i64.and(i64.sub(mask + 1n, i64.and(z, mask)), mask);
+    }
+    return i64.and(i64.mul(i64.and(z, mask), pInv), mask);
+  }
+
   let multiplySingle = func(
     {
       in: [i32, i32, i32],
@@ -513,7 +523,7 @@ function Multiply(
         local.set(xi, i64.and(xix2, mask26));
 
         local.set(tmp, i64.add(i64.mul(xi, Y[0]), Z[0]));
-        local.set(qi, i64.and(i64.mul(i64.and(tmp, mask26), pInv26), mask26));
+        local.set(qi, computeQ(tmp, pInv26, mask26));
         local.get(tmp);
         addMul(qi, P[0]);
         i64.shr_s($, 26n);
@@ -534,7 +544,7 @@ function Multiply(
         local.set(xi, i64.shr_s(xix2, 26n));
 
         local.set(tmp, i64.add(i64.mul(xi, Y[0]), Z[0]));
-        local.set(qi, i64.and(i64.mul(i64.and(tmp, mask25), pInv25), mask25));
+        local.set(qi, computeQ(tmp, pInv25, mask25));
         local.get(tmp);
         addMul(qi, P[0]);
         i64.shr_s($, 25n);
@@ -558,12 +568,9 @@ function Multiply(
       for (let i = 0; i < 4; i++) {
         local.get(Z[2 * i]);
         if (i > 0) i64.add(); // add carry
-
         i64.and(Z[2 * i + 1], mask25);
         i64.shl($, 26n);
-
-        i64.add();
-        local.set(tmp);
+        local.set(tmp, i64.add());
 
         // store 51 bits at a time
         i64.and(tmp, mask51);
