@@ -13,7 +13,7 @@ import { assertDeepEqual } from "../testing/nested.js";
 import { pallasParams } from "../concrete/pasta.params.js";
 import { Random } from "../testing/random.js";
 import { createEquivalentWasm, wasmSpec } from "../testing/equivalent-wasm.js";
-import { montmul, montMulFmaWrapped } from "./fma-js.js";
+import { montmulWrapped, montMulFmaWrapped } from "./fma-js.js";
 import { Field } from "./field.js";
 import { writeWat } from "../wasm/wat-helpers.js";
 
@@ -235,7 +235,7 @@ eqivalentWasm(
 
 eqivalentWasm(
   { from: [fieldSingle, fieldSingle], to: fieldSingle },
-  (x, y) => montmul(x, y),
+  (x, y) => montmulWrapped(x, y),
   Fp.Wasm.multiplySingle,
   "mul single"
 );

@@ -12,7 +12,7 @@
 import { f64, f64x2, func, Module } from "wasmati";
 import { pallasParams } from "../concrete/pasta.params.js";
 import { createField, inverse } from "../bigint/field.js";
-import { assert, bigintToLimbsRelaxed } from "../util.js";
+import { assert } from "../util.js";
 import {
   bigint64ToNumber,
   bigintFromFloat51Limbs,
@@ -38,8 +38,10 @@ export {
   montmulSimple,
   montmulRef,
   montmul,
+  montmulWrapped,
   montmulFma,
   montMulFmaWrapped,
+  montmulFma2,
   montMulFmaWrapped2,
   montmulNoFmaWrapped,
   montmulNoFma,
@@ -62,7 +64,7 @@ let madd: (x: number, y: number, z: number) => number = instance.exports.madd;
 // modmul with 5 x 51-bit limbs
 let Fp = createField(pallasParams.modulus);
 let p = Fp.modulus;
-let P = bigintToLimbsRelaxed(p, 51, 5);
+let P = bigintToInt51Limbs(p);
 let pInv = inverse(-p, 1n << 51n);
 let R = Fp.mod(1n << 255n);
 let Rinv = Fp.inverse(R);
@@ -86,10 +88,7 @@ function montmulRef(xR: bigint, yR: bigint) {
   return Fp.multiply(zR2, Rinv);
 }
 
-function montmul(x: bigint, y: bigint) {
-  let X = bigintToInt51Limbs(x);
-  let Y = bigintToInt51Limbs(y);
-
+function montmul(X: BigUint64Array, Y: BigUint64Array) {
   let Z = new BigUint64Array(6);
 
   for (let i = 0; i < 5; i++) {
@@ -115,6 +114,18 @@ function montmul(x: bigint, y: bigint) {
     }
     Z[5] = 0n;
   }
+  // propagate carries
+  let carry = 0n;
+  for (let i = 0; i < 5; i++) {
+    [Z[i], carry] = split(Z[i] + carry);
+  }
+  return Z.slice(0, 5);
+}
+
+function montmulWrapped(x: bigint, y: bigint) {
+  let X = bigintToInt51Limbs(x);
+  let Y = bigintToInt51Limbs(y);
+  let Z = montmul(X, Y);
   return bigintFromInt51Limbs(Z);
 }
 
@@ -168,7 +179,6 @@ function montmulFma(X: Float64Array, Y: Float64Array) {
   assert(Z[4] >= 0, `negative top limb ${Z[4]}`);
 
   // propagate carries to make limbs positive
-  // not sure this is needed
   let carry = 0n;
   let floats = new Float64Array(5);
   for (let i = 0; i < 5; i++) {
@@ -307,11 +317,7 @@ function montmulNoFma(X: BigUint64Array, Y: BigUint64Array) {
   }
   assert(carry === 0n, `carry ${carry}`);
 
-  let Z51 = new BigUint64Array(5);
-  for (let i = 0; i < 5; i++) {
-    Z51[i] = Z[i];
-  }
-  return Z51;
+  return Z.slice(0, 5);
 }
 
 function montmulNoFmaWrapped(x: bigint, y: bigint) {

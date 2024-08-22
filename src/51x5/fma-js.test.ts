@@ -16,17 +16,19 @@ import { equivalent, spec, Spec } from "../testing/equivalent.js";
 import { Random } from "../testing/random.js";
 import {
   madd,
-  montmul,
+  montmulWrapped,
   montMulFmaWrapped,
-  montMulFmaWrapped2,
   montmulNoFma,
   montmulNoFma2,
-  montmulNoFmaWrapped,
   montmulRef,
   montmulSimple,
+  montmul,
+  montmulFma,
+  montmulFma2,
 } from "./fma-js.js";
 import {
   bigint64ToNumber,
+  bigintToFloat51Limbs,
   bigintToInt51Limbs,
   float52ToInt64,
   int64ToFloat52,
@@ -77,33 +79,44 @@ for (let i = 0; i < 10_000; i++) {
 // modmul with 5 x 51-bit limbs
 let p = pallasParams.modulus;
 
-let field = Spec.field(p, { relaxed: true });
-let fieldStrict = Spec.field(p, { relaxed: false });
+let field = Spec.field(p);
+let fieldRelaxed = Spec.field(p, { relaxed: true }); // only requires equality mod p
 
-// montmul with the correction step is (exactly) the same as multiplying and dividing by the Montgomery radius
-equivalent({ from: [field, field], to: fieldStrict, verbose: true })(
+let int51 = spec(Random(() => rng51.randomField()));
+let int51F = spec(Random(() => Number(rng51.randomField())));
+
+let limbs = spec(Random.map(field.rng, bigintToInt51Limbs), {
+  assertEqual(x, y, message) {
+    assertDeepEqual([...x], [...y], message);
+  },
+});
+let limbsF = spec(Random.map(field.rng, bigintToFloat51Limbs), {
+  assertEqual(x, y, message) {
+    assertDeepEqual([...x], [...y], message);
+  },
+});
+
+// montmul with full reduction is (exactly) the same as multiplying and dividing by the Montgomery radius
+equivalent({ from: [field, field], to: field, verbose: true })(
   montmulSimple,
   montmulRef,
   "montmul ref"
 );
 
-// the bigint and array-based versions of montmul are equivalent
-equivalent({ from: [field, field], to: field, verbose: true })(
+// the bigint and array-based versions of montmul are equivalent mod p
+equivalent({ from: [field, field], to: fieldRelaxed, verbose: true })(
   montmulSimple,
-  montmul,
+  montmulWrapped,
   "montmul consistent"
 );
 
-// given inputs < p, montmul returns a value < 2p
+// given inputs < p, montmul returns a value < 2p (but not necessarily < p)
 // this means it will need a correction step in many places! (we can't go from 2p to 2p, because the Montgomery radius is too small)
 equivalent({ from: [field, field], to: Spec.boolean, verbose: true })(
-  (x, y) => montmul(x, y) < 2n * p,
+  (x, y) => montmulWrapped(x, y) < 2n * p,
   () => true,
   "montmul < 2p"
 );
-
-let int51 = spec(Random(() => rng51.randomField()));
-let int51F = spec(Random(() => Number(rng51.randomField())));
 
 equivalent({ from: [int51], to: int51, verbose: true })(
   (x) => x,
@@ -117,33 +130,27 @@ equivalent({ from: [int51F], to: int51F, verbose: true })(
 );
 
 // montmulFma is exactly equivalent to montmul
-equivalent({ from: [field, field], to: fieldStrict, verbose: true })(
-  montmul,
+equivalent({ from: [field, field], to: field, verbose: true })(
+  montmulWrapped,
   montMulFmaWrapped,
   "montmul fma (js)"
 );
 
-// montmulFma2 is exactly equivalent to montmul
-equivalent({ from: [field, field], to: fieldStrict, verbose: true })(
-  montmul,
-  montMulFmaWrapped2,
+// montmulFma2 is limbwise equivalent to montmulFma
+equivalent({ from: [limbsF, limbsF], to: limbsF, verbose: true })(
+  montmulFma,
+  montmulFma2,
   "montmul fma 2 (js)"
 );
 
-// montmulNoFma is exactly equivalent to montmul
-equivalent({ from: [field, field], to: fieldStrict, verbose: true })(
+// montmulNoFma is limbwise equivalent to montmul
+equivalent({ from: [limbs, limbs], to: limbs, verbose: true })(
   montmul,
-  montmulNoFmaWrapped,
+  montmulNoFma,
   "montmul no fma (js)"
 );
 
-// different versions of mul w/o fma
-let limbs = spec(Random.map(field.rng, bigintToInt51Limbs), {
-  assertEqual(x, y, message) {
-    assertDeepEqual([...x], [...y], message);
-  },
-});
-
+// different versions of mul w/o fma are limbwise equivalent
 equivalent({ from: [limbs, limbs], to: limbs, verbose: true })(
   montmulNoFma,
   montmulNoFma2,
