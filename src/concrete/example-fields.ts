@@ -10,7 +10,8 @@ import {
 export { exampleFields };
 
 let pSmall = 101n;
-let pBabybear = (1n << 31n) - 1n;
+let pM31 = (1n << 31n) - 1n;
+let pBabybear = (1n << 31n) - (1n << 27n) + 1n;
 let pGoldilocks = (1n << 64n) - (1n << 32n) + 1n;
 let p25519 = (1n << 255n) - 19n;
 let pSecp256k1 = (1n << 256n) - (1n << 32n) - 0b1111010001n;
@@ -20,6 +21,7 @@ let exampleFields = {
   pastaFp: createField(pPasta),
   pastaFq: createField(qPasta),
   small: createField(pSmall),
+  m31: createField(pM31),
   babybear: createField(pBabybear),
   goldilocks: createField(pGoldilocks),
   f25519: createField(p25519),
