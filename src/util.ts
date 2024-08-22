@@ -5,6 +5,7 @@ export {
   bigintToBytes32,
   bigintToBits,
   bigintToLimbs,
+  bigintToLimbsRelaxed,
   bigintFromLimbs,
   logBytesAsBigint,
   log2,
@@ -91,6 +92,26 @@ function bigintToLimbs(x0: bigint, w: number, n: number) {
 
 /**
  * Split bigint into n w-bit limbs, which are also bigints
+ *
+ * In contrast to {@link bigintToLimbs}, this function allows high limbs larger than w bits.
+ *
+ * @param x0
+ * @param w word size
+ * @param n number of limbs
+ */
+function bigintToLimbsRelaxed(x0: bigint, w: number, n: number) {
+  let limbs = new BigUint64Array(n);
+  let wn = BigInt(w);
+  let wordMax = (1n << wn) - 1n;
+  for (let i = 0; i < n; i++) {
+    limbs[i] = x0 & wordMax;
+    x0 >>= wn;
+  }
+  return limbs;
+}
+
+/**
+ * Split bigint into n w-bit limbs, which are also bigints
  * @param x
  * @param w word size
  * @param n number of limbs
@@ -117,7 +138,11 @@ function bigintToLimbsSigned(x: bigint, w: number, n: number) {
 //   bigintToLimbsSigned(((X / 2n - 1n) * (X ** 9n - 1n)) / (X - 1n), 29, 9)
 // );
 
-function bigintFromLimbs(x: BigUint64Array | bigint[], w: number, n: number) {
+function bigintFromLimbs(
+  x: BigUint64Array | BigInt64Array | bigint[],
+  w: number,
+  n: number
+) {
   let wn = BigInt(w);
   let x0 = x[n - 1];
   for (let i = n - 2; i >= 0; i--) {

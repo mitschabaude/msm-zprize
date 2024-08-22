@@ -8,6 +8,8 @@
 import { test, Random } from "../testing/property.js";
 import { deepEqual } from "node:assert/strict";
 import { Tuple } from "../types.js";
+import { assertDeepEqual } from "./nested.js";
+import { mod } from "../bigint/field-util.js";
 
 export {
   equivalent,
@@ -51,7 +53,7 @@ function equivalent<
     label?: string
   ) {
     let generators = from.map((spec) => spec.rng);
-    let assertEqual = to.assertEqual ?? deepEqual;
+    let assertEqual = to.assertEqual ?? assertDeepEqual;
     return test.custom({ logSuccess: verbose })(
       label ?? "Eqivalence test",
       ...generators,
@@ -153,6 +155,15 @@ function numberLessThan(n: number): Spec<number, number> {
   return spec(Random.nat(n - 1));
 }
 
+function field(p: bigint, options?: { relaxed?: boolean; inputsX2?: boolean }) {
+  let rng = options?.inputsX2 ? Random.fieldx2(p) : Random.field(p);
+  return spec(rng, {
+    assertEqual: options?.relaxed
+      ? (x, y, message) => assertDeepEqual(mod(x, p), mod(y, p), message)
+      : undefined,
+  });
+}
+
 const Spec = {
   unit,
   boolean,
@@ -164,6 +175,7 @@ const Spec = {
   onlyIf,
   first,
   second,
+  field,
 };
 
 // spec combinators

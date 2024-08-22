@@ -22,16 +22,35 @@ import {
   randomBytes,
 } from "../../src/util.js";
 import { randomGenerators } from "../../src/bigint/field-random.js";
+import { createWasmWithBenches } from "../../src/51x5/field.js";
 
 export { benchmark };
 
-async function benchmark({ p, t }: { p: bigint; t: bigint }, doWrite = false) {
-  let { randomFieldx2 } = randomGenerators(p);
+async function benchmark(
+  { p, t }: { p: bigint; t: bigint },
+  { doWrite = false, onlyQuick = false } = {}
+) {
+  let { randomField, randomFieldx2 } = randomGenerators(p);
   let N = 1e7;
   let Ninv = 5e5;
   let Npow = 5e4;
 
-  for (let w of [29]) {
+  if (p < 1n << 255n) {
+    let Fp = await createWasmWithBenches(p);
+    let x = Fp.Memory.local.getPointer(Fp.size);
+    Fp.writePair(x, randomField(), randomField());
+    bench("multiply 51x5", Fp.Wasm.benchMultiply, { x, N }, 2);
+    Fp.writePair(x, randomField(), randomField());
+    bench("multiply 51x5", Fp.Wasm.benchMultiply, { x, N }, 2);
+
+    Fp.writeSingle(x, randomField());
+    bench("multiply 51x5 single", Fp.Wasm.benchMultiplySingle, { x, N });
+
+    Fp.writePair(x, randomField(), randomField());
+    bench("multiply 51x5 no fma", Fp.Wasm.benchMultiplyNoFma, { x, N }, 2);
+  }
+
+  for (let w of [26, 29]) {
     let { n } = montgomeryParams(p, w);
     let {
       benchMultiply: benchMontgomery,
@@ -182,8 +201,11 @@ async function benchmark({ p, t }: { p: bigint; t: bigint }, doWrite = false) {
     bench("multiply barrett", wasm.benchBarrett, { x, N });
     bench("multiply schoolbook", wasm.benchSchoolbook, { x, N });
     bench("multiply square", wasm.benchSquare, { x, N });
+
     // bench("multiply bigint", benchMultiplyBigint, { x, N });
-    bench("add x3", wasm.benchAdd, { x, N });
+    bench("add", wasm.benchAdd, { x, N }, 3);
+
+    if (onlyQuick) continue;
 
     writeBigint(x, randomFieldx2());
     writeBigint(y, randomFieldx2());
@@ -266,11 +288,16 @@ async function benchmark({ p, t }: { p: bigint; t: bigint }, doWrite = false) {
 function bench(
   name: string,
   compute: (x: number, N: number) => void,
-  { x, N }: { x: number; N: number }
+  { x, N }: { x: number; N: number },
+  /**
+   * parameter to use if the operation is performed multiple times
+   */
+  scale = 1
 ) {
+  let Nscaled = Math.round(N / scale);
   name = name.padEnd(20, " ");
   tic();
-  compute(x, N);
+  compute(x, Nscaled);
   let time = toc();
   console.log(`${name} \t ${(N / time / 1e3).toFixed(1).padStart(4)}M ops/s`);
   console.log(`${name} \t ${((time / N) * 1e6).toFixed(0)}ns`);

@@ -30,6 +30,17 @@ class ImplicitMemory {
     return global(offset);
   }
 
+  dataToOffset(bytes: Uint8Array | number[]) {
+    let offset = this.dataOffset;
+    let dataSegment = data(
+      { offset: Const.i32(offset), memory: this.memory },
+      bytes
+    );
+    this.dataSegments.push(dataSegment);
+    this.dataOffset += bytes.length;
+    return offset;
+  }
+
   getExports() {
     return {
       memory: this.memory,
