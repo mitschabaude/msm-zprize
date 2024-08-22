@@ -46,7 +46,6 @@ import {
 import { constF64x2, constI64x2 } from "./field-base.js";
 import { arithmetic, carryLocals, carryLocalsSingle } from "./arith.js";
 import { assert } from "../util.js";
-import { forLoop, forLoop4 } from "../wasm/wasm-util.js";
 
 export { Multiply };
 
@@ -68,7 +67,9 @@ let mask26 = (1n << 26n) - 1n;
 let shift25 = 1n << 25n;
 let mask25 = (1n << 25n) - 1n;
 
-let nLocalsV128 = [v128, v128, v128, v128, v128] as const;
+let localsI64 = (n: number) => Array<Type<i64>>(n).fill(i64);
+let localsF64 = (n: number) => Array<Type<f64>>(n).fill(f64);
+let localsV128 = (n: number) => Array<Type<v128>>(n).fill(v128);
 
 function Multiply(
   p: bigint,
@@ -117,8 +118,7 @@ function Multiply(
         v128,
         v128,
         i32,
-        ...nLocalsV128,
-        ...nLocalsV128,
+        ...localsV128(5 + 5),
       ],
     },
     ([z, x, y], [xi, qi, hi1, hi2, lo1, lo2, carry, idx, ...rest]) => {
@@ -217,7 +217,7 @@ function Multiply(
     {
       in: [i32, i32, i32], // pointers to z, x, y, where z = x * y
       out: [],
-      locals: [v128, i32, ...nLocalsV128, ...nLocalsV128, ...nLocalsV128, v128],
+      locals: [v128, i32, ...localsV128(5 + 5 + 6)],
     },
     ([z, x, y], [tmp, idx, ...rest]) => {
       let Y = rest.slice(0, 5);
@@ -296,8 +296,107 @@ function Multiply(
     }
   );
 
-  let nLocalsI64 = [i64, i64, i64, i64, i64] as const;
-  let threeV128 = [v128, v128, v128] as const;
+  function i64_extract_l(x: Local<v128>) {
+    local.get(x);
+    return i64x2.extract_lane(0);
+  }
+  function i64_extract_h(x: Local<v128>) {
+    local.get(x);
+    return i64x2.extract_lane(1);
+  }
+
+  // sadly this is not significantly faster than the x2 version
+  // missing from wasm:
+  // -) f64.relaced_madd
+  // -) i64.reinterpret_f64
+  let multiplySingleFma = func(
+    {
+      in: [i32, i32, i32], // pointers to z, x, y, where z = x * y
+      out: [],
+      locals: [v128, ...localsV128(5 + 5), ...localsI64(6)],
+    },
+    ([z, x, y], [tmp, ...rest]) => {
+      let Y = rest.slice(0, 5) as Local<v128>[];
+      let LH = rest.slice(5, 10) as Local<v128>[];
+      let Z = rest.slice(10, 16) as Local<i64>[];
+
+      // load y from memory into locals, convert to f64
+      for (let i = 0; i < 5; i++) {
+        i64.load({ offset: i * 8 }, y);
+        i64.add($, c52n);
+        f64.reinterpret_i64();
+        f64.sub($, c52);
+        f64x2.splat();
+        local.set(Y[i]);
+      }
+
+      // initialize Z with constants that offset float64 prefixes
+      for (let i = 0; i < 6; i++) {
+        local.set(Z[i], zInitial[i]);
+      }
+
+      for (let i = 0; i < 5; i++) {
+        let xi = tmp;
+        // convert x to f64
+        i64.load({ offset: i * 8 }, x);
+        i64.add($, c52n);
+        f64.reinterpret_i64();
+        f64.sub($, c52);
+        local.set(xi, f64x2.splat());
+        // local.set(xi, v128.load64_splat({ offset: i * 8 }, x));
+
+        for (let j = 0; j < 5; j++)
+          local.set(LH[j], f64x2.relaxed_madd(xi, Y[j], constF64x2(c103)));
+        for (let j = 0; j < 5; j++)
+          local.set(Z[j + 1], i64.add(Z[j + 1], i64_extract_l(LH[j])));
+        for (let j = 0; j < 5; j++)
+          local.set(LH[j], f64x2.sub(constF64x2(c2), LH[j])); // lo sub
+        for (let j = 0; j < 5; j++)
+          local.set(LH[j], f64x2.relaxed_madd(xi, Y[j], LH[j])); // lo
+        for (let j = 0; j < 5; j++)
+          local.set(Z[j], i64.add(Z[j], i64_extract_l(LH[j])));
+
+        // compute qi
+        let qi = tmp;
+        i64.mul(Z[0], pInv);
+        i64.and($, mask51);
+        i64.add($, c51n);
+        f64.reinterpret_i64();
+        f64.sub($, c51);
+        f64x2.splat();
+        local.set(qi);
+
+        for (let j = 0; j < 5; j++)
+          local.set(
+            LH[j],
+            f64x2.relaxed_madd(qi, constF64x2(PF[j]), constF64x2(c103))
+          );
+        for (let j = 0; j < 5; j++)
+          local.set(Z[j + 1], i64.add(Z[j + 1], i64_extract_l(LH[j])));
+        for (let j = 0; j < 5; j++)
+          local.set(LH[j], f64x2.sub(constF64x2(c2), LH[j])); // lo sub
+        for (let j = 0; j < 5; j++)
+          local.set(LH[j], f64x2.relaxed_madd(qi, constF64x2(PF[j]), LH[j])); // lo
+
+        local.set(Z[0], i64.add(Z[0], i64_extract_l(LH[0])));
+        local.set(Z[1], i64.add(Z[1], i64_extract_l(LH[1])));
+        local.set(Z[0], i64.add(Z[1], i64.shr_s(Z[0], 51n)));
+        local.set(Z[1], i64.add(Z[2], i64_extract_l(LH[2])));
+        local.set(Z[2], i64.add(Z[3], i64_extract_l(LH[3])));
+        local.set(Z[3], i64.add(Z[4], i64_extract_l(LH[4])));
+        local.set(Z[4], Z[5]);
+        if (i < 4) local.set(Z[5], zInitial[6 + i]);
+      }
+
+      // if (reduce) reduceLocalsSingle(Z);
+      if (carry) carryLocalsSingle(Z);
+
+      // store in memory
+      for (let i = 0; i < 5; i++) {
+        i64.store({ offset: i * 8 }, z, Z[i]);
+      }
+    }
+  );
 
   /**
    * 51x5 multiplication of two _single_, packed field elements
@@ -323,7 +422,7 @@ function Multiply(
     {
       in: [i32, i32, i32], // pointers to z, x, y, where z = x * y
       out: [],
-      locals: [v128, ...threeV128, ...threeV128, ...threeV128, ...nLocalsI64],
+      locals: [v128, ...localsV128(3 + 3 + 3), ...localsI64(5)],
     },
     ([z, x, y], [l128, ...rest]) => {
       let Y = rest.slice(0, 3) as Local<v128>[];
@@ -483,7 +582,6 @@ function Multiply(
   let Plo = PI.map((x) => x & mask26);
   let Phi = PI.map((x) => x >> 26n);
 
-  let localsI64 = (n: number) => Array<Type<i64>>(n).fill(i64);
   let P = [...Plo].flatMap((lo, i) => [lo, Phi[i]]);
 
   let pInv26 = inverse(-p, 1n << 26n);
@@ -502,7 +600,7 @@ function Multiply(
     func(
       {
         in: [i32, i32, i32],
-        locals: [i64, i64, i64, i64, ...localsI64(10), ...localsI64(9)],
+        locals: [i64, i64, i64, i64, ...localsI64(10 + 9)],
         out: [],
       },
       ([xy, x, y], [tmp, qi, xix2, xi, ...rest]) => {
@@ -587,6 +685,7 @@ function Multiply(
         i64.store({ offset: 4 * limbGap + limbOffset }, xy, $);
       }
     );
+  let multiplySingleNoFma = multiplySingle(8, 0);
 
   let multiplyNoFma0 = multiplySingle(16, 0);
   let multiplyNoFma1 = multiplySingle(16, 8);
@@ -617,12 +716,10 @@ function Multiply(
     );
   }
 
-  let localsV128 = (n: number) => Array<Type<v128>>(n).fill(v128);
-
   let multiplyNoFmaSimd = func(
     {
       in: [i32, i32, i32],
-      locals: [v128, v128, v128, v128, ...localsV128(10), ...localsV128(9)],
+      locals: [v128, v128, v128, v128, ...localsV128(10 + 9)],
       out: [],
     },
     ([xy, x, y], [tmp, qi, xix2, xi, ...rest]) => {
@@ -715,16 +812,7 @@ function Multiply(
     {
       in: [i32, i32, i32], // pointers to z, x, y, where z = x * y
       out: [],
-      locals: [
-        v128,
-        i32,
-        v128,
-        v128,
-        ...nLocalsV128,
-        ...nLocalsV128,
-        ...nLocalsV128,
-        v128,
-      ],
+      locals: [v128, i32, v128, v128, ...localsV128(5 + 5 + 5), v128],
     },
     ([z, x, y], [tmp, idx, xiLo, xiHi, ...rest]) => {
       let Ylo = rest.slice(0, 5);
@@ -812,7 +900,7 @@ function Multiply(
     }
   );
 
-  return { multiply, multiplyNoFma, multiplySingle: multiplySingle(8, 0) };
+  return { multiply, multiplyNoFma, multiplySingle: multiplySingleNoFma };
 }
 
 function swap64x2(z: Local<v128>) {
