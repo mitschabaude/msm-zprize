@@ -100,27 +100,45 @@ function createMsm({
     let scratch = Field.local.getPointers(40);
 
     tic("prepare shared pointers");
-    let { bucketCounts, scalarSlices, buckets, maxBucketSizes } =
-      await broadcastFromMain("buckets", () => {
-        let buckets: Uint32Array[] = Array(K);
-        for (let k = 0; k < K; k++) {
-          buckets[k] = new Uint32Array(new SharedArrayBuffer(4 * (L + 1)));
-          // the starting pointer for the array of points, in bucket order
-          buckets[k][0] = Field.global.getPointer(2 * N * sizeAffine);
-        }
+    let {
+      bucketCounts,
+      scalarSlices,
+      buckets,
+      maxBucketSizes,
+      bucketToPoints,
+      bucketFirstPoints,
+    } = await broadcastFromMain("buckets", () => {
+      let buckets: Uint32Array[] = Array(K);
+      for (let k = 0; k < K; k++) {
+        buckets[k] = new Uint32Array(new SharedArrayBuffer(4 * (L + 1)));
+        // the starting pointer for the array of points, in bucket order
+        buckets[k][0] = Field.global.getPointer(2 * N * sizeAffine);
+      }
 
-        let bucketCounts: Uint32Array[] = Array(K);
-        let scalarSlices: Uint32Array[] = Array(K);
-        for (let k = 0; k < K; k++) {
-          bucketCounts[k] = new Uint32Array(new SharedArrayBuffer(8 * (L + 1)));
-          scalarSlices[k] = new Uint32Array(new SharedArrayBuffer(8 * 2 * N));
-        }
+      let bucketCounts: Uint32Array[] = Array(K);
+      let scalarSlices: Uint32Array[] = Array(K);
+      let bucketToPoints: Uint32Array[] = Array(K);
+      let bucketFirstPoints: Uint32Array[] = Array(K);
 
-        let maxBucketSizes = new Uint32Array(
-          new SharedArrayBuffer(4 * THREADS)
+      for (let k = 0; k < K; k++) {
+        bucketCounts[k] = new Uint32Array(new SharedArrayBuffer(8 * (L + 1)));
+        scalarSlices[k] = new Uint32Array(new SharedArrayBuffer(8 * 2 * N));
+        bucketToPoints[k] = new Uint32Array(new SharedArrayBuffer(4 * 2 * N));
+        bucketFirstPoints[k] = new Uint32Array(
+          new SharedArrayBuffer(4 * (L + 1))
         );
-        return { bucketCounts, scalarSlices, buckets, maxBucketSizes };
-      });
+      }
+
+      let maxBucketSizes = new Uint32Array(new SharedArrayBuffer(4 * THREADS));
+      return {
+        bucketCounts,
+        scalarSlices,
+        buckets,
+        maxBucketSizes,
+        bucketToPoints,
+        bucketFirstPoints,
+      };
+    });
 
     // ensure same pointer offsets in other threads
     if (!isMain()) {
@@ -218,6 +236,17 @@ function createMsm({
     sortPoints(buckets, pointPtr, bucketCounts, scalarSlices, params);
     toc();
 
+    tic("sort point indices");
+    sortPointIndices(
+      bucketToPoints,
+      bucketFirstPoints,
+      pointPtr,
+      bucketCounts,
+      scalarSlices,
+      params
+    );
+    toc();
+
     tic("sort points (wait)");
     await barrier();
     toc();
@@ -225,11 +254,63 @@ function createMsm({
     // first large computation stage - bucket accumulation
     tic("bucket accumulation");
     let nPairsMax = N * K; // maximum number of pairs = half the number of points, times K partitions
+    let R = new Uint32Array(nPairsMax); // holds results of additions
     let G = new Uint32Array(nPairsMax); // holds first summands
     let H = new Uint32Array(nPairsMax); // holds second summands
 
+    if (1 < maxBucketSize) {
+      let p = 0;
+      let sizeAffine2 = 2 * sizeAffine;
+
+      // walk over this thread's buckets to identify point-pairs to add
+      for (let { k, lstart, length } of chunksPerThread[thread]) {
+        let bucketsK = buckets[k];
+        let bucketStartK = bucketFirstPoints[k];
+        let bucketIndicesK = bucketToPoints[k];
+
+        for (let l = lstart; l < lstart + length; l++) {
+          let bucket = bucketsK[l - 1];
+          let nextBucket = bucketsK[l];
+
+          let i = bucketStartK[l - 1];
+          let bucketEnd = bucketStartK[l];
+
+          for (
+            ;
+            // i < bucketEnd; // TODO doesn't work, why?
+            bucket + sizeAffine < nextBucket;
+            i += 2, bucket += sizeAffine2
+          ) {
+            R[p] = bucket;
+            G[p] = bucketIndicesK[i];
+            H[p] = bucketIndicesK[i + 1];
+            p++;
+          }
+        }
+      }
+
+      let nPairs = p;
+      if (nPairs !== 0) {
+        // now (G,H) represents a big array of independent additions, which we batch-add
+        tic();
+        if (useSafeAdditions) {
+          batchAddNew(Field, Affine, scratch, R, G, H, nPairs);
+        } else {
+          batchAddUnsafeNew(Field, R, G, H, nPairs);
+        }
+        let t = toc();
+        if (t > 0)
+          log(
+            `batch add: ${t.toFixed(0)}ms, ${nPairs} pairs, ${(
+              (t / nPairs) *
+              1e6
+            ).toFixed(1)}ns / pair`
+          );
+      }
+    }
+
     // batch-add buckets into their first point, in `maxBucketSize` iterations
-    for (let m = 1; m < maxBucketSize; m *= 2) {
+    for (let m = 2; m < maxBucketSize; m *= 2) {
       let p = 0;
       let sizeAffineM = m * sizeAffine;
       let sizeAffine2M = 2 * m * sizeAffine;
@@ -485,6 +566,47 @@ function createMsm({
 
         // copy point to the bucket array -- expensive operation! (but it pays off)
         Affine.copy(newPtr, ptr);
+      }
+    }
+  }
+
+  function sortPointIndices(
+    bucketIndices: Uint32Array[],
+    bucketFirstIndices: Uint32Array[],
+    pointPtr: number,
+    bucketCounts: Uint32Array[],
+    scalarSlices: Uint32Array[],
+    { N, K, L }: { N: number; K: number; L: number }
+  ) {
+    let sizeAffine2 = 2 * sizeAffine;
+    let N2 = 2 * N;
+
+    // loop over input points, check in which bucket they belong and store the
+    // point's memory index in a contiguous array containing all buckets of a partition
+    for (let [k, kend] = range(K); k < kend; k++) {
+      let scalarSlicesK = scalarSlices[k];
+      let bucketCountsK = bucketCounts[k];
+      let bucketIndicesK = bucketIndices[k];
+
+      // keep bucket bounds around
+      for (let l = 0; l <= L; l++) {
+        bucketFirstIndices[k][l] = bucketCountsK[l];
+      }
+
+      for (let i = 0, pi = pointPtr; i < N2; i++, pi += sizeAffine2) {
+        let l = scalarSlicesK[i];
+        let carry = l >>> 31;
+        l &= 0x7f_ff_ff_ff;
+        if (l === 0) continue;
+
+        // compute the memory address in the bucket->point indices array
+        let l0 = bucketCountsK[l - 1]++; // update start index, so the next point in this bucket lands at one position higher
+
+        // a point `A` and it's negation `-A` are stored next to each other
+        let ptr = pi + (carry === 1 ? sizeAffine : 0); // this is the point's memory address
+
+        // store the point's memory address in the bucket array
+        bucketIndicesK[l0] = ptr;
       }
     }
   }
