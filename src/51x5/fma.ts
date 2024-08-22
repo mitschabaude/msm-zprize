@@ -515,9 +515,10 @@ function Multiply(
         local.set(Y[2 * i + 1], i64.shr_s(xi, 26n));
       }
 
-      forLoop({ incr: 8, i, start: 0, end: 5 }, () => {
-        // load x[2i] into local
-        local.set(xix2, i64.load({}, i32.add(x, i)));
+      // forLoop({ incr: 8, i, start: 0, end: 5 }, () => {
+      for (let i = 0; i < 5; i++) {
+        // local.set(xix2, i64.load({}, i32.add(x, i)));
+        local.set(xix2, i64.load({ offset: i * 8 }, x));
 
         // LOWER HALF
         local.set(xi, i64.and(xix2, mask26));
@@ -562,7 +563,8 @@ function Multiply(
         addMul(qi, P[9]);
         i64.shl($, 1n);
         local.set(Z[8]);
-      });
+        // });
+      }
 
       // final pass of collecting carries, store output in memory
       for (let i = 0; i < 4; i++) {
@@ -588,10 +590,127 @@ function Multiply(
     }
   );
 
+  function computeQx2(z: Input<v128>, pInv: bigint, mask: bigint) {
+    if (pInv === mask) {
+      // p = 1 mod 2^w  <==> -p^(-1) = -1 mod 2^w
+      // qi = z * (-1) % 2^w = (2^w - z) % 2^w
+      return v128.and(
+        i64x2.sub(constI64x2(mask + 1n), v128.and(z, constI64x2(mask))),
+        constI64x2(mask)
+      );
+    }
+    return v128.and(
+      i64x2.mul(v128.and(z, constI64x2(mask)), constI64x2(pInv)),
+      constI64x2(mask)
+    );
+  }
+
+  let localsV128 = (n: number) => Array<Type<v128>>(n).fill(v128);
+
+  let multiplyNoFma = func(
+    {
+      in: [i32, i32, i32],
+      locals: [
+        v128,
+        v128,
+        v128,
+        v128,
+        i32,
+        ...localsV128(10),
+        ...localsV128(9),
+      ],
+      out: [],
+    },
+    ([xy, x, y], [tmp, qi, xix2, xi, i, ...rest]) => {
+      let Y = rest.slice(0, 10);
+      let Z = rest.slice(10, 19);
+
+      // load y from memory into locals
+      for (let i = 0; i < 5; i++) {
+        local.set(xi, v128.load({ offset: i * 16 }, y));
+        local.set(Y[2 * i], v128.and(xi, constI64x2(mask26)));
+        local.set(Y[2 * i + 1], i64x2.shr_s(xi, 26));
+      }
+
+      // forLoop({ incr: 16, i, start: 0, end: 5 }, () => {
+      for (let i = 0; i < 5; i++) {
+        // local.set(xix2, v128.load({}, i32.add(x, i)));
+        local.set(xix2, v128.load({ offset: i * 16 }, x));
+
+        // LOWER HALF
+        local.set(xi, v128.and(xix2, constI64x2(mask26)));
+
+        local.set(tmp, i64x2.add(i64x2.mul(xi, Y[0]), Z[0]));
+        local.set(qi, computeQx2(tmp, pInv26, mask26));
+        local.get(tmp);
+        addMulx2(qi, P[0]);
+        i64x2.shr_s($, 26);
+
+        for (let j = 1; j < 9; j++) {
+          i64x2.mul(xi, Y[j]);
+          if (j === 1) i64x2.add();
+          addMulx2(qi, P[j]);
+          local.get(Z[j]);
+          i64x2.add();
+          local.set(Z[j - 1]);
+        }
+        i64x2.mul(xi, Y[9]);
+        addMulx2(qi, P[9]);
+        local.set(Z[8]);
+
+        // UPPER HALF
+        local.set(xi, i64x2.shr_s(xix2, 26));
+
+        local.set(tmp, i64x2.add(i64x2.mul(xi, Y[0]), Z[0]));
+        local.set(qi, computeQx2(tmp, pInv25, mask25));
+        local.get(tmp);
+        addMulx2(qi, P[0]);
+        i64x2.shr_s($, 25);
+        local.set(Z[1], i64x2.add($, Z[1]));
+
+        for (let j = 1; j < 9; j++) {
+          i64x2.mul(xi, Y[j]);
+          addMulx2(qi, P[j]);
+          if (j % 2 === 1) i64x2.shl($, 1);
+          local.get(Z[j]);
+          i64x2.add();
+          local.set(Z[j - 1]);
+        }
+        i64x2.mul(xi, Y[9]);
+        addMulx2(qi, P[9]);
+        i64x2.shl($, 1);
+        local.set(Z[8]);
+        // });
+      }
+
+      // final pass of collecting carries, store output in memory
+      for (let i = 0; i < 4; i++) {
+        local.get(Z[2 * i]);
+        if (i > 0) i64x2.add(); // add carry
+        v128.and(Z[2 * i + 1], constI64x2(mask25));
+        i64x2.shl($, 26);
+        local.set(tmp, i64x2.add());
+
+        // store 51 bits at a time
+        v128.and(tmp, constI64x2(mask51));
+        v128.store({ offset: i * 16 }, xy, $);
+
+        // put carry on the stack
+        i64x2.shr_s(tmp, 51);
+        i64x2.shr_s(Z[2 * i + 1], 25);
+        i64x2.add();
+      }
+      // final iteration simpler because X[9] is not used
+      local.get(Z[8]);
+      i64x2.add(); // add carry
+      v128.store({ offset: 4 * 16 }, xy, $);
+    }
+  );
+
   /**
    * 51x5 multiplication without using FMA instructions, as a fallback for compatibility.
    */
-  let multiplyNoFma = func(
+  let multiplyNoFmaSlow = func(
     {
       in: [i32, i32, i32], // pointers to z, x, y, where z = x * y
       out: [],
@@ -710,6 +829,16 @@ function addMul(l: Local<i64>, c: bigint) {
   }
   i64.mul(l, c);
   i64.add();
+}
+
+function addMulx2(l: Local<v128>, c: bigint) {
+  if (c === 0n) return;
+  if (c === 1n) {
+    i64x2.add($, l);
+    return;
+  }
+  i64x2.mul(l, constI64x2(c));
+  i64x2.add();
 }
 
 // debugging helpers, currently unused
