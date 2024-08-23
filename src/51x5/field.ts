@@ -5,7 +5,8 @@ import { float52ToInt64, mask51, c51, c51n } from "./common.js";
 import { Multiply } from "./fma.js";
 import { assert } from "../util.js";
 import { forLoop1, ImplicitMemory } from "../wasm/wasm-util.js";
-import { bigintPairToData } from "./field-base.js";
+import { bigintPairToData, createField } from "./field-base.js";
+import { fieldMethods } from "./field-single.js";
 
 export { createWasm, createWasmWithBenches, Field };
 
@@ -17,17 +18,34 @@ function validateAssumptions(modulus: bigint) {
   assert(modulus + (1n << 206n) < 1n << 255n);
 }
 
+type binop = (z: number, x: number, y: number) => void;
+type unop = (z: number, x: number) => void;
+type relop = (x: number, y: number) => number;
+type testop = (x: number) => number;
+
 type WasmIntf = {
   multiplyCarry: (z: number, x: number, y: number) => void;
   multiplyReduceCarry: (z: number, x: number, y: number) => void;
   multiplyNoFma: (z: number, x: number, y: number) => void;
   multiplySingle: (z: number, x: number, y: number) => void;
+
+  addRaw: binop;
+  addCarry: binop;
+  subRaw: binop;
+  subCarry: binop;
+  fullyReduce: unop;
+  isEqual: relop;
+  isZero: testop;
+  isGreater: relop;
+  copy: unop;
 };
 
 async function createWasm(p: bigint, { memSize = 1 << 16 } = {}) {
   let wasmMemory = importMemory({ min: memSize, max: memSize, shared: true });
   let implicitMemory = new ImplicitMemory(wasmMemory);
   let pSelectPtr = pSelect(p, implicitMemory);
+
+  let FieldSingle = fieldMethods(createField(p, "single"));
 
   let { multiply: multiplyCarry } = Multiply(p, pSelectPtr, {
     reduce: false,
@@ -38,17 +56,18 @@ async function createWasm(p: bigint, { memSize = 1 << 16 } = {}) {
     multiplySingle,
   } = Multiply(p, pSelectPtr, { reduce: true });
 
-  let multiplyModule = Module({
+  let module = Module({
     memory: wasmMemory,
     exports: {
       multiplyCarry,
       multiplyReduceCarry,
       multiplyNoFma,
       multiplySingle,
+      ...FieldSingle,
       ...implicitMemory.getExports(),
     },
   });
-  let { instance } = await multiplyModule.instantiate();
+  let { instance } = await module.instantiate();
 
   const Memory = memoryHelpers(p, 51, 5, { memory: wasmMemory.value });
   const memory = Memory.memoryBytes;
@@ -58,7 +77,7 @@ async function createWasm(p: bigint, { memSize = 1 << 16 } = {}) {
     memory,
     instance.exports,
     Memory,
-    multiplyModule.toBytes()
+    module.toBytes()
   );
 }
 

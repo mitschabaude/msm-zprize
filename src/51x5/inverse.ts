@@ -21,7 +21,7 @@ import { ImplicitMemory } from "../wasm/wasm-util.js";
 import { log2 } from "../util.js";
 import { bigintToData, createField } from "./field-base.js";
 import { mask51 } from "./common.js";
-import { fieldMethods } from "./field-single.js";
+import { fieldWithMethods } from "./field-single.js";
 import { multiplySingle } from "./fma.js";
 
 // TODO: untested, WIP
@@ -34,7 +34,7 @@ type Inverse = {
 };
 
 function Inverse(p: bigint, implicitMemory: ImplicitMemory): Inverse {
-  const Field = fieldMethods(createField("single", p));
+  const Field = fieldWithMethods(createField(p, "single"));
   const n = 5;
   const multiply = multiplySingle(p, "single");
 

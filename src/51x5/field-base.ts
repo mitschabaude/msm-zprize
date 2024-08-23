@@ -105,7 +105,7 @@ function FieldLayout(type: FieldLayout) {
 
 type FieldBase = ReturnType<typeof createField>;
 
-function createField(type: FieldLayout, p: bigint) {
+function createField(p: bigint, type: FieldLayout) {
   let { limbGap, limbOffset, size } = FieldLayout(type);
 
   function copyInline(x: Local<i32>, y: Local<i32>) {

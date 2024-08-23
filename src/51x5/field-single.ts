@@ -16,7 +16,12 @@ import {
 import { FieldBase } from "./field-base.js";
 import { mask51 } from "./common.js";
 
-export { fieldMethods };
+export { fieldWithMethods, fieldMethods };
+
+function fieldWithMethods(Field: FieldBase) {
+  let methods = fieldMethods(Field);
+  return { ...Field, ...methods };
+}
 
 /**
  * various helpers for finite field arithmetic:
@@ -163,8 +168,11 @@ function fieldMethods(Field: FieldBase) {
     }
   );
 
+  let copy = func({ in: [i32, i32], out: [] }, ([x, y]) => {
+    Field.copyInline(x, y);
+  });
+
   return {
-    ...Field,
     addRaw,
     addCarry,
     subRaw,
@@ -173,5 +181,6 @@ function fieldMethods(Field: FieldBase) {
     isEqual,
     isZero,
     isGreater,
+    copy,
   };
 }
