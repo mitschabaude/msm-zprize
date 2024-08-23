@@ -95,26 +95,8 @@ const I64x2 = {
     i64.store({ offset: 16 * i + 8 * lane }, x, xi);
   },
 
-  loadLimbFirst(x: Local<i32>, i: number) {
-    return i64.load({ offset: 16 * i }, x);
-  },
-  loadLimbSecond(x: Local<i32>, i: number) {
-    return i64.load({ offset: 16 * i + 8 }, x);
-  },
   const(x: bigint) {
     return constI64x2(x);
-  },
-  carry(input: StackVar<v128>, tmp: Local<v128>) {
-    // put carry on the stack
-    local.tee(tmp, input);
-    i64x2.shr_s($, 51);
-    v128.and(tmp, constI64x2(mask51));
-  },
-  carrySingle(input: StackVar<i64>, tmp: Local<i64>) {
-    // put carry on the stack
-    local.tee(tmp, input);
-    i64.shr_s($, 51n);
-    i64.and(tmp, mask51);
   },
 };
 
