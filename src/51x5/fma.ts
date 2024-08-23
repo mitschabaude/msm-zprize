@@ -424,6 +424,9 @@ function Multiply(
   );
 
   /**
+   * FAILED: this is a bit slower than `multiplySingleFma`
+   * (Also, doesn't pass test currently :/)
+   *
    * 51x5 multiplication of two _single_, packed field elements
    *
    * we use 64x2 operations on two elements of a 5- or 6-limb vector
@@ -471,19 +474,20 @@ function Multiply(
       // load y from memory into locals
       layout.forEach(([j, k], i) => {
         if (k === 5) {
-          v128.load64_zero({ offset: j * 8 }, y);
-          local.set(Y[i]);
+          local.set(Y[i], v128.load64_zero({ offset: j * 8 }, y));
           return;
         }
-        local.get(y);
-        local.get(Y[i]);
-        v128.load64_lane({ offset: j * 8 }, 0);
-        local.set(Y[i]);
-        local.get(y);
-        local.get(Y[i]);
-        v128.load64_lane({ offset: k * 8 }, 0);
-        local.set(Y[i]);
+        local.set(Y[i], v128.load64_lane({ offset: j * 8 }, 0, y, Y[i]));
+        local.set(Y[i], v128.load64_lane({ offset: k * 8 }, 0, y, Y[i]));
       });
+      if (convertInputs) {
+        f64x2.sub(i64x2.add(Y[0], constI64x2(c52n)), constF64x2(c52));
+        local.set(Y[0]);
+        f64x2.sub(i64x2.add(Y[1], constI64x2(c52n)), constF64x2(c52));
+        local.set(Y[1]);
+        f64x2.sub(i64x2.add(Y[2], constI64x2(c52n, 0n)), constF64x2(c52, 0));
+        local.set(Y[2]);
+      }
 
       // initialize Z with constants that offset float64 prefixes
       layout.forEach(([j, k], i) => {
@@ -492,7 +496,13 @@ function Multiply(
 
       for (let i = 0; i < 5; i++) {
         let xi = l128;
-        local.set(xi, v128.load64_splat({ offset: i * 8 }, x));
+        i64.load({ offset: i * 8 }, x);
+        if (convertInputs) {
+          i64.add($, c52n);
+          f64.reinterpret_i64();
+          f64.sub($, c52);
+        }
+        local.set(xi, f64x2.splat());
 
         // hi; note LH[5] = xi*0 + 0 = 0
         local.set(LH[0], f64x2.relaxed_madd(xi, Y[0], constF64x2(c103)));
@@ -514,12 +524,12 @@ function Multiply(
 
         // compute qi
         let qi = l128;
-        local.get(Z[0]);
-        i64.mul(i64x2.extract_lane(0), pInv);
+        i64.mul(i64x2.extract_lane(0, Z[0]), pInv);
         i64.and($, mask51);
         i64.add($, c51n);
-        i64x2.splat();
-        f64x2.sub($, constF64x2(c51));
+        f64.reinterpret_i64();
+        f64.sub($, c51);
+        f64x2.splat();
         local.set(qi);
 
         // hi; note LH[5] = qi*0 + 0 = 0
@@ -554,15 +564,13 @@ function Multiply(
 
         // Z[1,4] += [carry, 0]
         constI64x2(0n);
-        local.get(Z[0]);
-        i64x2.extract_lane(0);
+        i64x2.extract_lane(0, Z[0]);
         i64.shr_s($, 51n);
         i64x2.replace_lane(0);
         local.set(Z[1], i64x2.add($, Z[1]));
 
         constI64x2(zInitial[6 + i]);
-        local.get(Z[0]);
-        i64x2.extract_lane(1);
+        i64x2.extract_lane(1, Z[0]);
         i64x2.replace_lane(0);
         local.set(Z[0]); // Z[3, *]
 
@@ -929,10 +937,15 @@ function Multiply(
 }
 
 function swap64x2(z: Local<v128>) {
-  return i8x16.swizzle(
-    z,
-    v128.const("i8x16", [8, 9, 10, 11, 12, 13, 14, 15, 0, 1, 2, 3, 4, 5, 6, 7])
+  return i64x2.replace_lane(
+    0,
+    i64x2.splat(i64x2.extract_lane(0, z)),
+    i64x2.extract_lane(1, z)
   );
+  // return i8x16.swizzle(
+  //   z,
+  //   v128.const("i8x16", [8, 9, 10, 11, 12, 13, 14, 15, 0, 1, 2, 3, 4, 5, 6, 7])
+  // );
 }
 
 function addMul(l: Local<i64>, c: bigint) {
