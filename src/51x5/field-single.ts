@@ -162,13 +162,20 @@ function fieldMethods(Field: FieldBase) {
   );
   const add = func(
     { in: [i32, i32, i32], locals: [i64], out: [] },
-    ([z, x, y], [carry]) => {
+    ([z, x, y], [tmp]) => {
       for (let i = 0; i < 5; i++) {
         Field.loadLimb(x, i);
         Field.loadLimb(y, i);
         Field.storeLimb(z, i, i64.add());
       }
-      reduceInline(z, carry);
+      reduceInline(z);
+      // carry result
+      for (let i = 0; i < 5; i++) {
+        Field.loadLimb(z, i);
+        if (i > 0) i64.add(); // add carry
+        if (i < 4) carry($, tmp);
+        Field.storeLimb(z, i, $);
+      }
     }
   );
 
