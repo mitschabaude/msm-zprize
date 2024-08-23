@@ -24,8 +24,8 @@ let fieldRng = Random.field(p);
 
 let field = wasmSpec(Fp.Memory, fieldRng, {
   size: Fp.size,
-  there: (xPtr, x) => Fp.write(xPtr, x),
-  back: (x) => Fp.read(x),
+  there: (xPtr, x) => Fp.writeSingle(xPtr, x),
+  back: (x) => Fp.readSingle(x),
 });
 
 eqivalentWasm(
@@ -37,7 +37,7 @@ eqivalentWasm(
 
 eqivalentWasm(
   { from: [field, field], to: field },
-  (x, y) => x + y,
-  (out, x, y) => FpWasm.addCarry(out, x, y),
-  "add (no reduce)"
+  (x, y) => reduce(x + y),
+  (out, x, y) => FpWasm.add(out, x, y),
+  "add"
 );

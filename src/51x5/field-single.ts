@@ -91,12 +91,59 @@ function fieldMethods(Field: FieldBase) {
     i64.and(tmp, mask51);
   }
 
+  /**
+   * Let pU = (p[4] + 1) << 204
+   *
+   * Note that p < pU < p + 2^204
+   *
+   * We can efficiently test for x < pU by checking if
+   * x[4] <= p[4]
+   *
+   * `reduceInline` does:
+   * x < pU ? x : x - p
+   *
+   * Controls size explosion after addition as follows:
+   * [0, 2p) -> [0, p + 2^204)
+   * [0, 2*(p + 2^204)) -> [0, p + 2^205)
+   * [0, 2*(p + 2^205)) -> [0, p + 2^206)
+   * ...
+   *
+   * As long as the number of consecutive additions (or "positive subtractions") with
+   * subsequent reduction stays below a few dozen, a multiplication will always bring
+   * both inputs back into [0, pU)
+   */
+  function reduceInline(x: Local<i32>, carry_?: Local<i64>) {
+    block(null, ($return) => {
+      // return if x4 <= p4
+      // if not, x4 > p4 implies x > p
+      i64.le_s(Field.loadLimb(x, 4), Field.P[4]);
+      br_if($return);
+
+      if (carry_ === undefined) {
+        Field.forEach((i) => {
+          Field.storeLimb(x, i, i64.sub(Field.loadLimb(x, i), Field.P[i]));
+        });
+        return;
+      }
+      Field.forEach((i) => {
+        Field.loadLimb(x, i);
+        if (i > 0) i64.add(); // add the carry
+        i64.sub($, Field.P[i]);
+        if (i < 4) carry($, carry_);
+        Field.storeLimb(x, i, $);
+      });
+    });
+  }
+
+  const reduce = func({ in: [i32], locals: [i64], out: [] }, ([x], [carry]) => {
+    reduceInline(x, carry);
+  });
+
   const addRaw = func({ in: [i32, i32, i32], out: [] }, ([z, x, y]) => {
     for (let i = 0; i < 5; i++) {
       Field.loadLimb(x, i);
       Field.loadLimb(y, i);
-      i64.add();
-      Field.storeLimb(z, i, $);
+      Field.storeLimb(z, i, i64.add());
     }
   });
   const addCarry = func(
@@ -108,23 +155,34 @@ function fieldMethods(Field: FieldBase) {
         let yi = Field.loadLimb(y, i);
         i64.add(xi, yi);
         if (i > 0) i64.add(); // add carry
-        if (i < 4) carry($, tmp); // push carry on the stack
+        if (i < 4) carry($, tmp);
         Field.storeLimb(z, i, $);
       }
     }
   );
+  const add = func(
+    { in: [i32, i32, i32], locals: [i64], out: [] },
+    ([z, x, y], [carry]) => {
+      for (let i = 0; i < 5; i++) {
+        Field.loadLimb(x, i);
+        Field.loadLimb(y, i);
+        Field.storeLimb(z, i, i64.add());
+      }
+      reduceInline(z, carry);
+    }
+  );
 
-  const subRaw = func({ in: [i32, i32, i32], out: [] }, ([out, x, y]) => {
+  const subRaw = func({ in: [i32, i32, i32], out: [] }, ([z, x, y]) => {
     for (let i = 0; i < 5; i++) {
       Field.loadLimb(x, i);
       Field.loadLimb(y, i);
       i64.sub();
-      Field.storeLimb(out, i, $);
+      Field.storeLimb(z, i, $);
     }
   });
   const subCarry = func(
     { in: [i32, i32, i32], locals: [i64], out: [] },
-    ([out, x, y], [tmp]) => {
+    ([z, x, y], [tmp]) => {
       for (let i = 0; i < 5; i++) {
         // (carry, out[i]) = x[i] - y[i] + carry;
         Field.loadLimb(x, i);
@@ -132,8 +190,38 @@ function fieldMethods(Field: FieldBase) {
         i64.sub();
         if (i > 0) i64.add(); // add carry
         if (i < 4) carry($, tmp);
-        Field.storeLimb(out, i, $);
+        Field.storeLimb(z, i, $);
       }
+    }
+  );
+  /**
+   * Subtracting x, y in [0, pU) means the result is in [-pU, pU)
+   * We conditionally add p, which brings the result to [p-pU, pU)
+   * Note that it can be slightly negative. TODO: is this ok?
+   */
+  const sub = func(
+    { in: [i32, i32, i32], locals: [i64], out: [] },
+    ([z, x, y], [tmp]) => {
+      for (let i = 0; i < 5; i++) {
+        // (carry, out[i]) = x[i] + P[i] - y[i] + carry;
+        Field.loadLimb(x, i);
+        Field.loadLimb(y, i);
+        i64.sub();
+        if (i > 0) i64.add(); // add carry
+        carry($, tmp); // we leave carry even in the last iteration
+        Field.storeLimb(z, i, $);
+      }
+      // if we underflowed, carry = -1, otherwise carry = 0
+      i64.eqz();
+      br_if(0); // conditional return
+      // + p
+      Field.forEach((i) => {
+        Field.loadLimb(x, i);
+        if (i > 0) i64.add(); // add the carry
+        i64.sub($, Field.P[i]);
+        if (i < 4) carry($, tmp);
+        Field.storeLimb(x, i, $);
+      });
     }
   );
 
@@ -173,10 +261,13 @@ function fieldMethods(Field: FieldBase) {
   });
 
   return {
+    add,
     addRaw,
     addCarry,
+    sub,
     subRaw,
     subCarry,
+    reduce,
     fullyReduce,
     isEqual,
     isZero,

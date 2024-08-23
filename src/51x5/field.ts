@@ -29,8 +29,10 @@ type WasmIntf = {
   multiplyNoFma: (z: number, x: number, y: number) => void;
   multiplySingle: (z: number, x: number, y: number) => void;
 
+  add: binop;
   addRaw: binop;
   addCarry: binop;
+  sub: binop;
   subRaw: binop;
   subCarry: binop;
   fullyReduce: unop;
