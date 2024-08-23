@@ -22,7 +22,7 @@ export { fieldMethods };
  * various helpers for finite field arithmetic:
  * isEqual, isZero, isGreater, copy
  */
-function fieldMethods(Field: FieldBase["i64"]) {
+function fieldMethods(Field: FieldBase) {
   // x === y
   const isEqual = func({ in: [i32, i32], out: [i32] }, ([x, y]) => {
     Field.forEach((i) => {
@@ -133,7 +133,7 @@ function fieldMethods(Field: FieldBase["i64"]) {
   );
 
   /**
-   * if (x > 2p) x -= p
+   * if (x >= p) x -= p
    */
   const fullyReduce = func(
     { in: [i32], locals: [i64], out: [] },

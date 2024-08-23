@@ -19,6 +19,7 @@ export {
   FieldPair,
   createField,
   FieldBase,
+  FieldLayout,
   constF64x2,
   constI64x2,
   forEach,
@@ -92,24 +93,20 @@ const FieldPair = {
 
 type FieldLayout = "single" | ["lane", 0 | 1];
 
-function layout(type: FieldLayout) {
+function FieldLayout(type: FieldLayout) {
   switch (type) {
     case "single":
       return { limbGap: 8, limbOffset: 0, size: 8 * n, lane: 0 };
     default:
-      return {
-        limbGap: 16,
-        limbOffset: 8 * type[1],
-        size: 16 * n,
-        lane: type[1],
-      };
+      let [, lane] = type;
+      return { limbGap: 16, limbOffset: 8 * lane, size: 16 * n, lane };
   }
 }
 
 type FieldBase = ReturnType<typeof createField>;
 
 function createField(type: FieldLayout, p: bigint) {
-  let { limbGap, limbOffset, size } = layout(type);
+  let { limbGap, limbOffset, size } = FieldLayout(type);
 
   function copyInline(x: Local<i32>, y: Local<i32>) {
     local.get(x);
@@ -122,40 +119,34 @@ function createField(type: FieldLayout, p: bigint) {
     size,
     n,
     p,
+    ...Constants(p).i64,
 
-    i64: {
-      size,
-      n,
-      p,
-      ...Constants(p).i64,
-
-      loadLimb(x: Local<i32>, i: number) {
-        assert(i >= 0, "positive index");
-        return i64.load({ offset: limbGap * i + limbOffset }, x);
-      },
-      storeLimb(x: Local<i32>, i: number, xi: Input<i64>) {
-        assert(i >= 0, "positive index");
-        i64.store({ offset: limbGap * i + limbOffset }, x, xi);
-      },
-      load(X: Local<i64>[], x: Local<i32>) {
-        for (let i = 0; i < n; i++) {
-          local.set(X[i], i64.load({ offset: limbGap * i + limbOffset }, x));
-        }
-      },
-      store(x: Local<i32>, X: Input<i64>[]) {
-        for (let i = 0; i < n; i++) {
-          i64.store({ offset: limbGap * i + limbOffset }, x, X[i]);
-        }
-      },
-      setZero(x: Local<i32>) {
-        for (let i = 0; i < n; i++) {
-          i64.store({ offset: limbGap * i + limbOffset }, x, 0n);
-        }
-      },
-      forEach,
-      forEachReversed,
-      copyInline,
+    loadLimb(x: Local<i32>, i: number) {
+      assert(i >= 0, "positive index");
+      return i64.load({ offset: limbGap * i + limbOffset }, x);
     },
+    storeLimb(x: Local<i32>, i: number, xi: Input<i64>) {
+      assert(i >= 0, "positive index");
+      i64.store({ offset: limbGap * i + limbOffset }, x, xi);
+    },
+    load(X: Local<i64>[], x: Local<i32>) {
+      for (let i = 0; i < n; i++) {
+        local.set(X[i], i64.load({ offset: limbGap * i + limbOffset }, x));
+      }
+    },
+    store(x: Local<i32>, X: Input<i64>[]) {
+      for (let i = 0; i < n; i++) {
+        i64.store({ offset: limbGap * i + limbOffset }, x, X[i]);
+      }
+    },
+    setZero(x: Local<i32>) {
+      for (let i = 0; i < n; i++) {
+        i64.store({ offset: limbGap * i + limbOffset }, x, 0n);
+      }
+    },
+    forEach,
+    forEachReversed,
+    copyInline,
   };
 }
 

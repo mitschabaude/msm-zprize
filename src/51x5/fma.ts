@@ -43,7 +43,7 @@ import {
   bigintToFloat51Limbs,
   bigintToInt51Limbs,
 } from "./common.js";
-import { constF64x2, constI64x2 } from "./field-base.js";
+import { constF64x2, constI64x2, FieldLayout } from "./field-base.js";
 import { arithmetic, carryLocals, carryLocalsSingle } from "./arith.js";
 import { assert } from "../util.js";
 
@@ -621,10 +621,10 @@ function Multiply(
   let pInv26 = inverse(-p, 1n << 26n);
   let pInv25 = inverse(-p, 1n << 25n);
 
-  let multiplySingleNoFma = multiplySingle(p, 8, 0);
+  let multiplySingleNoFma = multiplySingle(p, "single");
 
-  let multiplyNoFma0 = multiplySingle(p, 16, 0);
-  let multiplyNoFma1 = multiplySingle(p, 16, 8);
+  let multiplyNoFma0 = multiplySingle(p, ["lane", 0]);
+  let multiplyNoFma1 = multiplySingle(p, ["lane", 1]);
 
   let multiplyNoFma = func(
     {
@@ -842,9 +842,10 @@ function Multiply(
 
 function multiplySingle(
   p: bigint,
-  limbGap: number,
-  limbOffset: number
+  layout: FieldLayout
 ): Func<["i32", "i32", "i32"], []> {
+  let { limbGap, limbOffset } = FieldLayout(layout);
+
   let PI = bigintToInt51Limbs(p);
   let P = [...PI].flatMap((pi) => [pi & mask26, pi >> 26n]);
   let pInv26 = inverse(-p, 1n << 26n);

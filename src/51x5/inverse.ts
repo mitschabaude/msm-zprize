@@ -34,9 +34,9 @@ type Inverse = {
 };
 
 function Inverse(p: bigint, implicitMemory: ImplicitMemory): Inverse {
-  const Field = fieldMethods(createField("single", p).i64);
+  const Field = fieldMethods(createField("single", p));
   const n = 5;
-  const multiply = multiplySingle(p, 8, 0);
+  const multiply = multiplySingle(p, "single");
 
   /**
    * a core building block for montgomery inversion
