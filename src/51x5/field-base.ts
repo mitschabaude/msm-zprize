@@ -1,16 +1,30 @@
-import { i32, i64, local, Local, Input, v128, f64, StackVar } from "wasmati";
+import {
+  i32,
+  i64,
+  local,
+  Local,
+  Input,
+  v128,
+  f64,
+  StackVar,
+  memory,
+  func,
+  Func,
+} from "wasmati";
 import { assert } from "../util.js";
-import { bigintToFloat51Limbs, bigintToInt51Limbs, mask51 } from "./common.js";
+import { bigintToInt51Limbs, mask51 } from "./common.js";
 
 export {
   Constants,
   FieldPair,
   createField,
+  FieldBase,
   constF64x2,
   constI64x2,
   forEach,
   forEachReversed,
   bigintPairToData,
+  bigintToData,
 };
 
 function constF64x2(x: number, y?: number): StackVar<v128> {
@@ -22,6 +36,14 @@ function constI64x2(x: bigint, y?: bigint): StackVar<v128> {
 
 const n = 5;
 const sizePair = 16 * n;
+const sizeSingle = 8 * n;
+
+function copyInline(x: Local<i32>, y: Local<i32>) {
+  local.get(x);
+  local.get(y);
+  i32.const(sizePair);
+  memory.copy();
+}
 
 const FieldPair = {
   size: 16 * n,
@@ -44,6 +66,10 @@ const FieldPair = {
       v128.store({ offset: 16 * i }, x, X[i]);
     }
   },
+  copyInline,
+  copy: func({ in: [i32, i32], out: [] }, ([x, y]) => {
+    copyInline(x, y);
+  }),
   forEach,
   forEachReversed,
   i64: {
@@ -80,13 +106,29 @@ function layout(type: FieldLayout) {
   }
 }
 
-function createField(type: FieldLayout) {
+type FieldBase = ReturnType<typeof createField>;
+
+function createField(type: FieldLayout, p: bigint) {
   let { limbGap, limbOffset, size } = layout(type);
+
+  function copyInline(x: Local<i32>, y: Local<i32>) {
+    local.get(x);
+    local.get(y);
+    i32.const(size);
+    memory.copy();
+  }
 
   return {
     size,
+    n,
+    p,
 
     i64: {
+      size,
+      n,
+      p,
+      ...Constants(p).i64,
+
       loadLimb(x: Local<i32>, i: number) {
         assert(i >= 0, "positive index");
         return i64.load({ offset: limbGap * i + limbOffset }, x);
@@ -105,6 +147,9 @@ function createField(type: FieldLayout) {
           i64.store({ offset: limbGap * i + limbOffset }, x, X[i]);
         }
       },
+      forEach,
+      forEachReversed,
+      copyInline,
     },
   };
 }
@@ -112,16 +157,10 @@ function createField(type: FieldLayout) {
 function Constants(p: bigint) {
   return {
     i64: {
-      P: bigintToInt51Limbs(p),
-      P2: bigintToInt51Limbs(2n * p),
-      Zero: bigintToInt51Limbs(0n),
-      One: bigintToInt51Limbs(1n),
-    },
-    f64: {
-      P: bigintToFloat51Limbs(p),
-      P2: bigintToFloat51Limbs(2n * p),
-      Zero: bigintToFloat51Limbs(0n),
-      One: bigintToFloat51Limbs(1n),
+      P: [...bigintToInt51Limbs(p)],
+      P2: [...bigintToInt51Limbs(2n * p)],
+      Zero: [...bigintToInt51Limbs(0n)],
+      One: [...bigintToInt51Limbs(1n)],
     },
   };
 }
@@ -135,6 +174,17 @@ function bigintPairToData(x0: bigint, x1: bigint) {
     view.setBigInt64(offset + 8, x1 & mask51, true);
     x0 >>= 51n;
     x1 >>= 51n;
+  }
+  return [...bytes];
+}
+
+function bigintToData(x0: bigint) {
+  let bytes = new Uint8Array(sizeSingle);
+  let view = new DataView(bytes.buffer);
+
+  for (let offset = 0; offset < sizeSingle; offset += 8) {
+    view.setBigInt64(offset, x0 & mask51, true);
+    x0 >>= 51n;
   }
   return [...bytes];
 }

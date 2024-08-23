@@ -11,10 +11,7 @@ import {
   i32,
   i64,
   v128,
-  if_,
   local,
-  memory,
-  return_,
   Local,
   i64x2,
   f64x2,
@@ -26,7 +23,7 @@ import {
 import { Constants, FieldPair, constI64x2 } from "./field-base.js";
 import { mask51 } from "./common.js";
 
-export { arithmetic, fieldHelpers, carryLocals, carryLocalsSingle };
+export { arithmetic, carryLocals, carryLocalsSingle };
 
 function carryLocals(Z: Local<v128>[]) {
   local.set(Z[1], i64x2.add(Z[1], i64x2.shr_s(Z[0], 51)));
@@ -214,85 +211,4 @@ function arithmetic(p: bigint, pSelectPtr: Global<i32>) {
     reduceLocals,
     reduceLocalsSingle,
   };
-}
-
-/**
- * various helpers for finite field arithmetic:
- * isEqual, isZero, isGreater, copy
- */
-function fieldHelpers(p: bigint) {
-  // x === y
-  function isEqual(lane: 0 | 1) {
-    return func({ in: [i32, i32], out: [i32] }, ([x, y]) => {
-      FieldPair.forEach((i) => {
-        // if (x[i] !== y[i]) return false;
-        FieldPair.i64.loadLane(x, i, lane);
-        FieldPair.i64.loadLane(y, i, lane);
-        i64.ne();
-        if_(null, () => {
-          i32.const(0);
-          return_();
-        });
-      });
-      i32.const(1);
-    });
-  }
-
-  // x === 0
-  function isZero(lane: 0 | 1) {
-    return func({ in: [i32], out: [i32] }, ([x]) => {
-      FieldPair.forEach((i) => {
-        // if (x[i] !== 0) return false;
-        FieldPair.i64.loadLane(x, i, lane);
-        i64.ne($, 0n);
-        if_(null, () => {
-          i32.const(0);
-          return_();
-        });
-      });
-      i32.const(1);
-    });
-  }
-
-  // x > y
-  function isGreater(lane: 0 | 1) {
-    return func(
-      { in: [i32, i32], locals: [i64, i64], out: [i32] },
-      ([x, y], [xi, yi]) => {
-        block(null, () => {
-          FieldPair.forEachReversed((i) => {
-            // if (x[i] > y[i]) return true;
-            FieldPair.i64.loadLane(x, i, lane);
-            local.tee(xi);
-            FieldPair.i64.loadLane(y, i, lane);
-            local.tee(yi);
-            i64.gt_s();
-            if_(null, () => {
-              i32.const(1);
-              return_();
-            });
-            // if (x[i] !== y[i]) break;
-            i64.ne(xi, yi);
-            br_if(0);
-          });
-        });
-        // return false;
-        i32.const(0);
-      }
-    );
-  }
-
-  // copy contents of y into x
-  // this should just be inlined if possible
-  function copyInline(x: Local<i32>, y: Local<i32>) {
-    local.get(x);
-    local.get(y);
-    i32.const(FieldPair.size);
-    memory.copy();
-  }
-  const copy = func({ in: [i32, i32], out: [] }, ([x, y]) => {
-    copyInline(x, y);
-  });
-
-  return { isEqual, isZero, isGreater, copy, copyInline };
 }
