@@ -147,6 +147,11 @@ function createField(type: FieldLayout, p: bigint) {
           i64.store({ offset: limbGap * i + limbOffset }, x, X[i]);
         }
       },
+      setZero(x: Local<i32>) {
+        for (let i = 0; i < n; i++) {
+          i64.store({ offset: limbGap * i + limbOffset }, x, 0n);
+        }
+      },
       forEach,
       forEachReversed,
       copyInline,
