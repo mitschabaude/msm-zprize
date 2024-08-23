@@ -26,14 +26,14 @@ import { multiplySingle } from "./fma.js";
 
 // TODO: untested, WIP
 
-export { fieldInverse };
+export { Inverse };
 
 type Inverse = {
   makeOdd: Func<[i32, i32], [i32]>;
   inverse: Func<[i32, i32, i32], []>;
 };
 
-function fieldInverse(p: bigint, implicitMemory: ImplicitMemory): Inverse {
+function Inverse(p: bigint, implicitMemory: ImplicitMemory): Inverse {
   const Field = fieldMethods(createField("single", p).i64);
   const n = 5;
   const multiply = multiplySingle(p, 8, 0);
