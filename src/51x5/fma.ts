@@ -62,9 +62,7 @@ for (let i = 0; i < 10; i++) {
   zInitial[i] = -((2n * (hiCount[i] * hiPre + loCount[i] * loPre)) & mask64);
 }
 
-let shift26 = 1n << 26n;
 let mask26 = (1n << 26n) - 1n;
-let shift25 = 1n << 25n;
 let mask25 = (1n << 25n) - 1n;
 
 let localsI64 = (n: number) => Array<Type<i64>>(n).fill(i64);
@@ -316,28 +314,17 @@ function Multiply(
     }
   );
 
-  function i64_extract_l(x: Local<v128>) {
-    local.get(x);
-    return i64x2.extract_lane(0);
-  }
-  function i64_extract_h(x: Local<v128>) {
-    local.get(x);
-    return i64x2.extract_lane(1);
-  }
-
-  // sadly this is not significantly faster than the x2 version
-  // missing from wasm:
-  // -) f64.relaxed_madd
-  // -) i64.reinterpret_f64
+  // this is somewhat faster than the x2 version! but slower than multiplySingle
+  // still, might be better if there was f64.relaxed_madd in Wasm
   let multiplySingleFma = func(
     {
       in: [i32, i32, i32], // pointers to z, x, y, where z = x * y
       out: [],
-      locals: [v128, ...localsV128(5 + 5), ...localsI64(6)],
+      locals: [v128, ...localsV128(5), ...localsF64(5), ...localsI64(6)],
     },
     ([z, x, y], [tmp, ...rest]) => {
       let Y = rest.slice(0, 5) as Local<v128>[];
-      let LH = rest.slice(5, 10) as Local<v128>[];
+      let LH = rest.slice(5, 10) as Local<f64>[];
       let Z = rest.slice(10, 16) as Local<i64>[];
 
       // load y from memory into locals, convert to f64
@@ -363,18 +350,28 @@ function Multiply(
         f64.reinterpret_i64();
         f64.sub($, c52);
         local.set(xi, f64x2.splat());
-        // local.set(xi, v128.load64_splat({ offset: i * 8 }, x));
 
         for (let j = 0; j < 5; j++)
-          local.set(LH[j], f64x2.relaxed_madd(xi, Y[j], constF64x2(c103)));
+          local.set(
+            LH[j],
+            f64x2.extract_lane(
+              0,
+              f64x2.relaxed_madd(xi, Y[j], constF64x2(c103))
+            )
+          );
         for (let j = 0; j < 5; j++)
-          local.set(Z[j + 1], i64.add(Z[j + 1], i64_extract_l(LH[j])));
+          local.set(Z[j + 1], i64.add(Z[j + 1], i64.reinterpret_f64(LH[j])));
+        for (let j = 0; j < 5; j++) local.set(LH[j], f64.sub(c2, LH[j]));
         for (let j = 0; j < 5; j++)
-          local.set(LH[j], f64x2.sub(constF64x2(c2), LH[j])); // lo sub
+          local.set(
+            LH[j],
+            f64x2.extract_lane(
+              0,
+              f64x2.relaxed_madd(xi, Y[j], f64x2.splat(LH[j]))
+            )
+          );
         for (let j = 0; j < 5; j++)
-          local.set(LH[j], f64x2.relaxed_madd(xi, Y[j], LH[j])); // lo
-        for (let j = 0; j < 5; j++)
-          local.set(Z[j], i64.add(Z[j], i64_extract_l(LH[j])));
+          local.set(Z[j], i64.add(Z[j], i64.reinterpret_f64(LH[j])));
 
         // compute qi
         let qi = tmp;
@@ -389,21 +386,29 @@ function Multiply(
         for (let j = 0; j < 5; j++)
           local.set(
             LH[j],
-            f64x2.relaxed_madd(qi, constF64x2(PF[j]), constF64x2(c103))
+            f64x2.extract_lane(
+              0,
+              f64x2.relaxed_madd(qi, constF64x2(PF[j]), constF64x2(c103))
+            )
           );
         for (let j = 0; j < 5; j++)
-          local.set(Z[j + 1], i64.add(Z[j + 1], i64_extract_l(LH[j])));
+          local.set(Z[j + 1], i64.add(Z[j + 1], i64.reinterpret_f64(LH[j])));
+        for (let j = 0; j < 5; j++) local.set(LH[j], f64.sub(c2, LH[j])); // lo sub
         for (let j = 0; j < 5; j++)
-          local.set(LH[j], f64x2.sub(constF64x2(c2), LH[j])); // lo sub
-        for (let j = 0; j < 5; j++)
-          local.set(LH[j], f64x2.relaxed_madd(qi, constF64x2(PF[j]), LH[j])); // lo
+          local.set(
+            LH[j],
+            f64x2.extract_lane(
+              0,
+              f64x2.relaxed_madd(qi, constF64x2(PF[j]), f64x2.splat(LH[j]))
+            )
+          ); // lo
 
-        local.set(Z[0], i64.add(Z[0], i64_extract_l(LH[0])));
-        local.set(Z[1], i64.add(Z[1], i64_extract_l(LH[1])));
+        local.set(Z[0], i64.add(Z[0], i64.reinterpret_f64(LH[0])));
+        local.set(Z[1], i64.add(Z[1], i64.reinterpret_f64(LH[1])));
         local.set(Z[0], i64.add(Z[1], i64.shr_s(Z[0], 51n)));
-        local.set(Z[1], i64.add(Z[2], i64_extract_l(LH[2])));
-        local.set(Z[2], i64.add(Z[3], i64_extract_l(LH[3])));
-        local.set(Z[3], i64.add(Z[4], i64_extract_l(LH[4])));
+        local.set(Z[1], i64.add(Z[2], i64.reinterpret_f64(LH[2])));
+        local.set(Z[2], i64.add(Z[3], i64.reinterpret_f64(LH[3])));
+        local.set(Z[3], i64.add(Z[4], i64.reinterpret_f64(LH[4])));
         local.set(Z[4], Z[5]);
         if (i < 4) local.set(Z[5], zInitial[6 + i]);
       }
@@ -735,6 +740,7 @@ function Multiply(
     );
   }
 
+  // slow, probably because there is no actual i64x2.mul supported by Intel
   let multiplyNoFmaSimd = func(
     {
       in: [i32, i32, i32],

@@ -79,8 +79,7 @@ function arithmetic(p: bigint, pSelectPtr: Global<i32>) {
     block(null, ($outer) => {
       // return if x4 <= p4
       // if not, x4 > p4 implies x > p
-      local.get(X[4]);
-      i64x2.extract_lane(lane);
+      i64x2.extract_lane(lane, X[4]);
       i64.le_s($, PI[4]);
       br_if($outer);
 
@@ -103,8 +102,7 @@ function arithmetic(p: bigint, pSelectPtr: Global<i32>) {
     local.tee(tmp, i64x2.le_s(X[4], constI64x2(PI[4])));
     i32x4.extract_lane(0);
     i32.mul($, 2);
-    local.get(tmp);
-    i32x4.extract_lane(2);
+    i32x4.extract_lane(2, tmp);
     // now there are two int32s on the stack which are either -1 (if x4 <= p4) or 0
     // use them to compute:
     // (x=-1, y=-1) -> 0, (-1, 0) -> 1, (0, -1) -> 2, (0, 0) -> 3
