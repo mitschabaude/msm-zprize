@@ -1,7 +1,7 @@
 import { call, func, i32, importMemory, Module } from "wasmati";
 import { MemoryHelpers, memoryHelpers } from "../wasm/memory-helpers.js";
 import { Tuple } from "../types.js";
-import { float52ToInt64, mask51, c51, c51n } from "./common.js";
+import { c52, c52n, float51ToInt64, mask51 } from "./common.js";
 import { Multiply } from "./fma.js";
 import { assert } from "../util.js";
 import { forLoop1, ImplicitMemory } from "../wasm/wasm-util.js";
@@ -124,13 +124,13 @@ class Field<Wasm> {
 
     for (let offset = 0; offset < sizeFieldPair; offset += 16) {
       // we write each limb of x0 and x1 next to each other, as one v128
-      view.setBigInt64(offset, (x0 & mask51) | c51n, true);
+      view.setBigInt64(offset, (x0 & mask51) | c52n, true);
       let x0F = view.getFloat64(offset, true);
-      view.setFloat64(offset, x0F - c51, true);
+      view.setFloat64(offset, x0F - c52, true);
 
-      view.setBigInt64(offset + 8, (x1 & mask51) | c51n, true);
+      view.setBigInt64(offset + 8, (x1 & mask51) | c52n, true);
       let x1F = view.getFloat64(offset + 8, true);
-      view.setFloat64(offset + 8, x1F - c51, true);
+      view.setFloat64(offset + 8, x1F - c52, true);
 
       x0 >>= 51n;
       x1 >>= 51n;
@@ -142,9 +142,9 @@ class Field<Wasm> {
     let view = new DataView(this.memory.buffer, x, sizeFieldPair);
 
     for (let offset = 0; offset < sizeFieldPair; offset += 8 + offsetBetween) {
-      view.setBigInt64(offset, (x0 & mask51) | c51n, true);
+      view.setBigInt64(offset, (x0 & mask51) | c52n, true);
       let x0F = view.getFloat64(offset, true);
-      view.setFloat64(offset, x0F - c51, true);
+      view.setFloat64(offset, x0F - c52, true);
       x0 >>= 51n;
     }
   }
@@ -160,10 +160,10 @@ class Field<Wasm> {
 
     for (let offset = sizeFieldPair - 16; offset >= 0; offset -= 16) {
       let x0F = view.getFloat64(offset, true);
-      x0 = (x0 << 51n) | float52ToInt64(x0F);
+      x0 = (x0 << 51n) | float51ToInt64(x0F);
 
       let x1F = view.getFloat64(offset + 8, true);
-      x1 = (x1 << 51n) | float52ToInt64(x1F);
+      x1 = (x1 << 51n) | float51ToInt64(x1F);
     }
     return [x0, x1] satisfies Tuple;
   }
@@ -173,7 +173,7 @@ class Field<Wasm> {
     let x0 = 0n;
     for (let offset = sizeFieldPair - 16; offset >= 0; offset -= 16) {
       let x0F = view.getFloat64(offset, true);
-      x0 = (x0 << 51n) | float52ToInt64(x0F);
+      x0 = (x0 << 51n) | float51ToInt64(x0F);
     }
     return x0;
   }

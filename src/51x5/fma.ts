@@ -24,7 +24,6 @@ import {
   Global,
   type Func,
   Local,
-  i8x16,
   Type,
   Input,
 } from "wasmati";
@@ -32,8 +31,6 @@ import { inverse } from "../bigint/field.js";
 import {
   c103,
   c2,
-  c51,
-  c51n,
   c52,
   c52n,
   hiPre,
@@ -160,8 +157,8 @@ function Multiply(
         // compute qi
         i64x2.mul(Z[0], constI64x2(pInv));
         v128.and($, constI64x2(mask51));
-        i64x2.add($, constI64x2(c51n));
-        f64x2.sub($, constF64x2(c51));
+        i64x2.add($, constI64x2(c52n));
+        f64x2.sub($, constF64x2(c52));
         local.set(qi);
 
         f64x2.relaxed_madd(qi, constF64x2(pj), constF64x2(c103));
@@ -270,10 +267,14 @@ function Multiply(
 
         // compute qi
         let qi = tmp;
+        // Note: int64 mul implicitly restricts the result to the low 64 bits,
+        // which is ok because we're only using the low 51 bits after that
+        // TODO: is int64x2.mul slow here?
+        // TODO: is there a possible speedup for p = 2^32*t + 1?
         i64x2.mul(Z[0], constI64x2(pInv));
         v128.and($, constI64x2(mask51));
-        i64x2.add($, constI64x2(c51n));
-        f64x2.sub($, constF64x2(c51));
+        i64x2.add($, constI64x2(c52n));
+        f64x2.sub($, constF64x2(c52));
         local.set(qi);
 
         for (let j = 0; j < 5; j++)
@@ -379,9 +380,9 @@ function Multiply(
         let qi = tmp;
         i64.mul(Z[0], pInv);
         i64.and($, mask51);
-        i64.add($, c51n);
+        i64.add($, c52n);
         f64.reinterpret_i64();
-        f64.sub($, c51);
+        f64.sub($, c52);
         f64x2.splat();
         local.set(qi);
 
@@ -528,9 +529,9 @@ function Multiply(
         let qi = l128;
         i64.mul(i64x2.extract_lane(0, Z[0]), pInv);
         i64.and($, mask51);
-        i64.add($, c51n);
+        i64.add($, c52n);
         f64.reinterpret_i64();
-        f64.sub($, c51);
+        f64.sub($, c52);
         f64x2.splat();
         local.set(qi);
 

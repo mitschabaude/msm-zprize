@@ -19,7 +19,7 @@ export {
   numberToBigint64,
   bigint64ToNumber,
   int64ToFloat52,
-  float52ToInt64,
+  float51ToInt64,
   bigintToFloat51Limbs,
   bigintFromFloat51Limbs,
   bigintToInt51Limbs,
@@ -37,7 +37,7 @@ const mask64 = (1n << 64n) - 1n;
 
 const c103 = 2 ** 103;
 const c52 = 2 ** 52;
-const c51 = 2 ** 52;
+const c51 = 2 ** 51;
 const c51x3 = 3 * 2 ** 51;
 const c2 = c103 + c51x3;
 
@@ -59,10 +59,10 @@ function bigint64ToNumber(x: bigint): number {
 }
 
 function int64ToFloat52(x: bigint) {
-  return bigint64ToNumber(x | c51n) - c51;
+  return bigint64ToNumber(x | c52n) - c52;
 }
-function float52ToInt64(x: number) {
-  return numberToBigint64(x + c51) & mask51;
+function float51ToInt64(x: number) {
+  return (numberToBigint64(x + c52) - c52n) & mask51;
 }
 
 // conversion between bigints and limb vectors
@@ -86,7 +86,7 @@ function bigintToFloat51Limbs(x: bigint) {
 function bigintFromFloat51Limbs(x: Float64Array) {
   let limbs = new BigUint64Array(5);
   for (let i = 0; i < 5; i++) {
-    limbs[i] = float52ToInt64(x[i]);
+    limbs[i] = float51ToInt64(x[i]);
   }
   return bigintFromLimbs(limbs, 51, 5);
 }
