@@ -19,7 +19,7 @@ function reduce(x: bigint) {
 
 // property tests
 
-let eqivalentWasm = createEquivalentWasm(Fp.Memory, { logSuccess: true });
+let equiv = createEquivalentWasm(Fp.Memory, { logSuccess: true });
 let fieldRng = Random.field(p);
 
 let field = wasmSpec(Fp.Memory, fieldRng, {
@@ -28,16 +28,23 @@ let field = wasmSpec(Fp.Memory, fieldRng, {
   back: (x) => Fp.readSingle(x),
 });
 
-eqivalentWasm(
+equiv(
   { from: [field], to: field },
   (x) => x,
   (out, x) => Fp.copy(out, x),
   "wasm roundtrip"
 );
 
-eqivalentWasm(
+equiv(
   { from: [field, field], to: field },
   (x, y) => reduce(x + y),
-  (out, x, y) => FpWasm.add(out, x, y),
+  FpWasm.add,
   "add"
+);
+
+equiv(
+  { from: [field, field], to: field },
+  FpBigint.subtract,
+  FpWasm.sub,
+  "sub"
 );

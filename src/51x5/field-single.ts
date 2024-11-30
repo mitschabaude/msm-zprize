@@ -12,9 +12,12 @@ import {
   type Func,
   type Input,
   StackVar,
+  drop,
+  call,
 } from "wasmati";
 import { FieldBase } from "./field-base.js";
 import { mask51 } from "./common.js";
+import { log64 } from "./debug.js";
 
 export { fieldWithMethods, fieldMethods };
 
@@ -204,13 +207,13 @@ function fieldMethods(Field: FieldBase) {
   /**
    * Subtracting x, y in [0, pU) means the result is in [-pU, pU)
    * We conditionally add p, which brings the result to [p-pU, pU)
-   * Note that it can be slightly negative. TODO: is this ok?
+   * Note that it can still be slightly negative -- in which case we do the same again
    */
   const sub = func(
     { in: [i32, i32, i32], locals: [i64], out: [] },
     ([z, x, y], [tmp]) => {
       for (let i = 0; i < 5; i++) {
-        // (carry, out[i]) = x[i] + P[i] - y[i] + carry;
+        // (carry, z[i]) = x[i] - y[i] + carry;
         Field.loadLimb(x, i);
         Field.loadLimb(y, i);
         i64.sub();
@@ -223,12 +226,24 @@ function fieldMethods(Field: FieldBase) {
       br_if(0); // conditional return
       // + p
       Field.forEach((i) => {
-        Field.loadLimb(x, i);
+        Field.loadLimb(z, i);
         if (i > 0) i64.add(); // add the carry
-        i64.sub($, Field.P[i]);
-        if (i < 4) carry($, tmp);
-        Field.storeLimb(x, i, $);
+        i64.add($, Field.P[i]);
+        carry($, tmp);
+        Field.storeLimb(z, i, $);
       });
+      // call(log64);
+      drop();
+      // i64.eqz();
+      // br_if(0); // conditional return
+      // Field.forEach((i) => {
+      //   Field.loadLimb(z, i);
+      //   if (i > 0) i64.add(); // add the carry
+      //   i64.add($, Field.P[i]);
+      //   if (i < 4) carry($, tmp);
+      //   else i64.and($, mask51);
+      //   Field.storeLimb(z, i, $);
+      // });
     }
   );
 
