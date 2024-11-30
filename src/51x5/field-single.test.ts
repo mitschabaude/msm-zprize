@@ -21,8 +21,14 @@ function reduce(x: bigint) {
 
 let equiv = createEquivalentWasm(Fp.Memory, { logSuccess: true });
 let fieldRng = Random.field(p);
+let fieldWeaklyReducedRng = Random.map(Random.bignat(1n << 204n), (u) => p + u);
 
 let field = wasmSpec(Fp.Memory, fieldRng, {
+  size: Fp.size,
+  there: (xPtr, x) => Fp.writeSingle(xPtr, x),
+  back: (x) => Fp.readSingle(x),
+});
+let fieldWeaklyReduced = wasmSpec(Fp.Memory, fieldWeaklyReducedRng, {
   size: Fp.size,
   there: (xPtr, x) => Fp.writeSingle(xPtr, x),
   back: (x) => Fp.readSingle(x),
@@ -47,4 +53,11 @@ equiv(
   FpBigint.subtract,
   FpWasm.sub,
   "sub"
+);
+
+equiv(
+  { from: [field, fieldWeaklyReduced], to: field },
+  (x, y) => FpBigint.mod(x - y),
+  FpWasm.sub,
+  "sub: x - y + p < 0"
 );

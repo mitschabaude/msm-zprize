@@ -232,18 +232,20 @@ function fieldMethods(Field: FieldBase) {
         carry($, tmp);
         Field.storeLimb(z, i, $);
       });
-      // call(log64);
-      drop();
-      // i64.eqz();
-      // br_if(0); // conditional return
-      // Field.forEach((i) => {
-      //   Field.loadLimb(z, i);
-      //   if (i > 0) i64.add(); // add the carry
-      //   i64.add($, Field.P[i]);
-      //   if (i < 4) carry($, tmp);
-      //   else i64.and($, mask51);
-      //   Field.storeLimb(z, i, $);
-      // });
+      // since the carry was negative before, we really computed z = x - y + 2^255
+      // now with the addition of p, we have x - y + p + 2^255
+      // the carry of that is 0 only if x - y + p < 0
+      // in that case we add p again, and ignoring the carry is just what gives us x - y + 2p
+      i64.ne($, 0n);
+      br_if(0);
+      Field.forEach((i) => {
+        Field.loadLimb(z, i);
+        if (i > 0) i64.add(); // add the carry
+        i64.add($, Field.P[i]);
+        if (i < 4) carry($, tmp);
+        else i64.and($, mask51);
+        Field.storeLimb(z, i, $);
+      });
     }
   );
 
