@@ -266,6 +266,7 @@ type WasmIntfWithBenches = {
   benchMultiplyNoFma: (x: number, N: number) => void;
   benchMultiplySingle: (x: number, N: number) => void;
   benchAddx3: (x: number, N: number) => void;
+  benchSubx3: (x: number, z: number, N: number) => void;
 };
 
 async function createWasmWithBenches(p: bigint) {
@@ -273,7 +274,8 @@ async function createWasmWithBenches(p: bigint) {
   let implicitMemory = new ImplicitMemory(wasmMemory);
   let pSelectPtr = pSelect(p, implicitMemory);
 
-  let FieldSingle = fieldMethods(createField(p, "single"));
+  let F = createField(p, "single");
+  let FieldSingle = fieldMethods(F);
 
   let { multiply, multiplyNoFma, multiplySingle } = Multiply(p, pSelectPtr, {
     reduce: true,
@@ -317,6 +319,18 @@ async function createWasmWithBenches(p: bigint) {
     }
   );
 
+  const benchSubx3 = func(
+    { in: [i32, i32, i32], locals: [i32], out: [] },
+    ([x, z, N], [i]) => {
+      F.setZero(z);
+      forLoop1(i, 0, N, () => {
+        for (let i = 0; i < 3; i++) {
+          call(FieldSingle.sub, [z, z, x]);
+        }
+      });
+    }
+  );
+
   let multiplyModule = Module({
     memory: wasmMemory,
     exports: {
@@ -324,6 +338,7 @@ async function createWasmWithBenches(p: bigint) {
       benchMultiplyNoFma,
       benchMultiplySingle,
       benchAddx3,
+      benchSubx3,
     },
   });
   let { instance } = await multiplyModule.instantiate();
