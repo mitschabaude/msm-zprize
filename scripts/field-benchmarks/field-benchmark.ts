@@ -54,12 +54,7 @@ async function benchmark(
 
     Fp.writeSingle(x, randomField());
     Fp.writeSingle(z, 0n);
-    bench(
-      "sub 51x5",
-      ([x, z]: number[], N: number) => Fp.Wasm.benchSubx3(x, z, N),
-      { x: [x, z], N },
-      3
-    );
+    bench("sub 51x5", Fp.Wasm.benchSubx3, { x, z, N }, 3);
   }
 
   for (let w of [29]) {
@@ -301,8 +296,8 @@ function bench(
   name: string,
   compute:
     | ((x: number, N: number) => void)
-    | ((x: number[], N: number) => void),
-  { x, N }: { x: number | number[]; N: number },
+    | ((x: number, z: number, N: number) => void),
+  { x, z, N }: { x: number; z?: number; N: number },
   /**
    * parameter to use if the operation is performed multiple times
    */
@@ -311,7 +306,8 @@ function bench(
   let Nscaled = Math.round(N / scale);
   name = name.padEnd(20, " ");
   tic();
-  compute(x as any, Nscaled);
+  if (z === undefined) (compute as (x: number, N: number) => void)(x, Nscaled);
+  else compute(x, z, Nscaled);
   let time = toc();
   console.log(`${name} \t ${(N / time / 1e3).toFixed(1).padStart(4)}M ops/s`);
   console.log(`${name} \t ${((time / N) * 1e6).toFixed(0)}ns`);
