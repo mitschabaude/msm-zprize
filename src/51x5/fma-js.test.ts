@@ -30,7 +30,7 @@ import {
   bigint64ToNumber,
   bigintToFloat51Limbs,
   bigintToInt51Limbs,
-  float52ToInt64,
+  float51ToInt64,
   int64ToFloat52,
   numberToBigint64,
 } from "./common.js";
@@ -120,12 +120,12 @@ equivalent({ from: [field, field], to: Spec.boolean, verbose: true })(
 
 equivalent({ from: [int51], to: int51, verbose: true })(
   (x) => x,
-  (x) => float52ToInt64(int64ToFloat52(x)),
+  (x) => float51ToInt64(int64ToFloat52(x)),
   "int/float roundtrip"
 );
 equivalent({ from: [int51F], to: int51F, verbose: true })(
   (x) => x,
-  (x) => int64ToFloat52(float52ToInt64(x)),
+  (x) => int64ToFloat52(float51ToInt64(x)),
   "float/int roundtrip"
 );
 

@@ -21,8 +21,6 @@ import {
   bigintToInt51Limbs,
   c103,
   c2,
-  c51,
-  c51n,
   c52,
   c52n,
   hiPre,
@@ -154,7 +152,7 @@ function montmulFma(X: Float64Array, Y: Float64Array) {
     let lo1 = madd(xi, yj, c2 - hi1);
     Z[0] += numberToBigint64(lo1);
 
-    let qi = bigint64ToNumber(((Z[0] * pInv) & mask51) + c51n) - c51;
+    let qi = bigint64ToNumber(((Z[0] * pInv) & mask51) + c52n) - c52;
 
     let hi2 = madd(qi, PF[0], c103);
     let lo2 = madd(qi, PF[0], c2 - hi2);
@@ -217,7 +215,7 @@ function montmulFma2(X: Float64Array, Y: Float64Array) {
     for (let j = 0; j < 5; j++) LH[j] = madd(xi, Y[j], LH[j]); // lo
     for (let j = 0; j < 5; j++) Z[j] += numberToBigint64(LH[j]);
 
-    let qi = bigint64ToNumber(((Z[0] * pInv) & mask51) + c51n) - c51;
+    let qi = bigint64ToNumber(((Z[0] * pInv) & mask51) + c52n) - c52;
 
     for (let j = 0; j < 5; j++) LH[j] = madd(qi, PF[j], c103); // hi
     for (let j = 0; j < 5; j++) Z[j + 1] += numberToBigint64(LH[j]);

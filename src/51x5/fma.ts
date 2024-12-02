@@ -24,7 +24,6 @@ import {
   Global,
   type Func,
   Local,
-  i8x16,
   Type,
   Input,
 } from "wasmati";
@@ -32,8 +31,6 @@ import { inverse } from "../bigint/field.js";
 import {
   c103,
   c2,
-  c51,
-  c51n,
   c52,
   c52n,
   hiPre,
@@ -43,11 +40,11 @@ import {
   bigintToFloat51Limbs,
   bigintToInt51Limbs,
 } from "./common.js";
-import { constF64x2, constI64x2 } from "./field-base.js";
+import { constF64x2, constI64x2, FieldLayout } from "./field-base.js";
 import { arithmetic, carryLocals, carryLocalsSingle } from "./arith.js";
 import { assert } from "../util.js";
 
-export { Multiply };
+export { Multiply, multiplySingle };
 
 type Multiply = {
   multiply: Func<["i32", "i32", "i32"], []>;
@@ -62,14 +59,37 @@ for (let i = 0; i < 10; i++) {
   zInitial[i] = -((2n * (hiCount[i] * hiPre + loCount[i] * loPre)) & mask64);
 }
 
-let shift26 = 1n << 26n;
 let mask26 = (1n << 26n) - 1n;
-let shift25 = 1n << 25n;
 let mask25 = (1n << 25n) - 1n;
 
 let localsI64 = (n: number) => Array<Type<i64>>(n).fill(i64);
 let localsF64 = (n: number) => Array<Type<f64>>(n).fill(f64);
 let localsV128 = (n: number) => Array<Type<v128>>(n).fill(v128);
+
+type MultiplyOptions = {
+  /**
+   * Whether to optionally subtract p to bring the result back into a range < p + eps with eps << p
+   */
+  reduce?: boolean;
+  /**
+   * Whether to propagate carries and make limbs positive
+   */
+  carry?: boolean;
+  /**
+   * Whether to convert the inputs from i64 to f64
+   *
+   * Note: by default this is `true`, and multiplication goes from i64 x i64 -> i64 limbs
+   * Toggling it false makes it f64 x f64 -> i64.
+   */
+  convertInputs?: boolean;
+  /**
+   * Whether to convert the result from i64 to f64
+   *
+   * Note: by default this is `false`, and multiplication goes from i64 x i64 -> i64 limbs
+   * Toggling it true makes it i64 x i64 -> f64
+   */
+  convertOutput?: boolean;
+};
 
 function Multiply(
   p: bigint,
@@ -82,30 +102,7 @@ function Multiply(
     carry = true,
     convertInputs = true,
     convertOutput = false,
-  }: {
-    /**
-     * Whether to optionally subtract p to bring the result back into a range < p + eps with eps << p
-     */
-    reduce?: boolean;
-    /**
-     * Whether to propagate carries and make limbs positive
-     */
-    carry?: boolean;
-    /**
-     * Whether to convert the inputs from i64 to f64
-     *
-     * Note: by default this is `true`, and multiplication goes from i64 x i64 -> i64 limbs
-     * Toggling it false makes it f64 x f64 -> i64.
-     */
-    convertInputs?: boolean;
-    /**
-     * Whether to convert the result from i64 to f64
-     *
-     * Note: by default this is `false`, and multiplication goes from i64 x i64 -> i64 limbs
-     * Toggling it true makes it i64 x i64 -> f64
-     */
-    convertOutput?: boolean;
-  } = {}
+  }: MultiplyOptions = {}
 ): Multiply {
   let pInv = inverse(-p, 1n << 51n);
   let PF = bigintToFloat51Limbs(p);
@@ -160,8 +157,8 @@ function Multiply(
         // compute qi
         i64x2.mul(Z[0], constI64x2(pInv));
         v128.and($, constI64x2(mask51));
-        i64x2.add($, constI64x2(c51n));
-        f64x2.sub($, constF64x2(c51));
+        i64x2.add($, constI64x2(c52n));
+        f64x2.sub($, constF64x2(c52));
         local.set(qi);
 
         f64x2.relaxed_madd(qi, constF64x2(pj), constF64x2(c103));
@@ -270,10 +267,14 @@ function Multiply(
 
         // compute qi
         let qi = tmp;
+        // Note: int64 mul implicitly restricts the result to the low 64 bits,
+        // which is ok because we're only using the low 51 bits after that
+        // TODO: is int64x2.mul slow here?
+        // TODO: is there a possible speedup for p = 2^32*t + 1?
         i64x2.mul(Z[0], constI64x2(pInv));
         v128.and($, constI64x2(mask51));
-        i64x2.add($, constI64x2(c51n));
-        f64x2.sub($, constF64x2(c51));
+        i64x2.add($, constI64x2(c52n));
+        f64x2.sub($, constF64x2(c52));
         local.set(qi);
 
         for (let j = 0; j < 5; j++)
@@ -316,28 +317,17 @@ function Multiply(
     }
   );
 
-  function i64_extract_l(x: Local<v128>) {
-    local.get(x);
-    return i64x2.extract_lane(0);
-  }
-  function i64_extract_h(x: Local<v128>) {
-    local.get(x);
-    return i64x2.extract_lane(1);
-  }
-
-  // sadly this is not significantly faster than the x2 version
-  // missing from wasm:
-  // -) f64.relaxed_madd
-  // -) i64.reinterpret_f64
+  // this is somewhat faster than the x2 version! but slower than multiplySingle
+  // still, might be better if there was f64.relaxed_madd in Wasm
   let multiplySingleFma = func(
     {
       in: [i32, i32, i32], // pointers to z, x, y, where z = x * y
       out: [],
-      locals: [v128, ...localsV128(5 + 5), ...localsI64(6)],
+      locals: [v128, ...localsV128(5), ...localsF64(5), ...localsI64(6)],
     },
     ([z, x, y], [tmp, ...rest]) => {
       let Y = rest.slice(0, 5) as Local<v128>[];
-      let LH = rest.slice(5, 10) as Local<v128>[];
+      let LH = rest.slice(5, 10) as Local<f64>[];
       let Z = rest.slice(10, 16) as Local<i64>[];
 
       // load y from memory into locals, convert to f64
@@ -363,47 +353,65 @@ function Multiply(
         f64.reinterpret_i64();
         f64.sub($, c52);
         local.set(xi, f64x2.splat());
-        // local.set(xi, v128.load64_splat({ offset: i * 8 }, x));
 
         for (let j = 0; j < 5; j++)
-          local.set(LH[j], f64x2.relaxed_madd(xi, Y[j], constF64x2(c103)));
+          local.set(
+            LH[j],
+            f64x2.extract_lane(
+              0,
+              f64x2.relaxed_madd(xi, Y[j], constF64x2(c103))
+            )
+          );
         for (let j = 0; j < 5; j++)
-          local.set(Z[j + 1], i64.add(Z[j + 1], i64_extract_l(LH[j])));
+          local.set(Z[j + 1], i64.add(Z[j + 1], i64.reinterpret_f64(LH[j])));
+        for (let j = 0; j < 5; j++) local.set(LH[j], f64.sub(c2, LH[j]));
         for (let j = 0; j < 5; j++)
-          local.set(LH[j], f64x2.sub(constF64x2(c2), LH[j])); // lo sub
+          local.set(
+            LH[j],
+            f64x2.extract_lane(
+              0,
+              f64x2.relaxed_madd(xi, Y[j], f64x2.splat(LH[j]))
+            )
+          );
         for (let j = 0; j < 5; j++)
-          local.set(LH[j], f64x2.relaxed_madd(xi, Y[j], LH[j])); // lo
-        for (let j = 0; j < 5; j++)
-          local.set(Z[j], i64.add(Z[j], i64_extract_l(LH[j])));
+          local.set(Z[j], i64.add(Z[j], i64.reinterpret_f64(LH[j])));
 
         // compute qi
         let qi = tmp;
         i64.mul(Z[0], pInv);
         i64.and($, mask51);
-        i64.add($, c51n);
+        i64.add($, c52n);
         f64.reinterpret_i64();
-        f64.sub($, c51);
+        f64.sub($, c52);
         f64x2.splat();
         local.set(qi);
 
         for (let j = 0; j < 5; j++)
           local.set(
             LH[j],
-            f64x2.relaxed_madd(qi, constF64x2(PF[j]), constF64x2(c103))
+            f64x2.extract_lane(
+              0,
+              f64x2.relaxed_madd(qi, constF64x2(PF[j]), constF64x2(c103))
+            )
           );
         for (let j = 0; j < 5; j++)
-          local.set(Z[j + 1], i64.add(Z[j + 1], i64_extract_l(LH[j])));
+          local.set(Z[j + 1], i64.add(Z[j + 1], i64.reinterpret_f64(LH[j])));
+        for (let j = 0; j < 5; j++) local.set(LH[j], f64.sub(c2, LH[j])); // lo sub
         for (let j = 0; j < 5; j++)
-          local.set(LH[j], f64x2.sub(constF64x2(c2), LH[j])); // lo sub
-        for (let j = 0; j < 5; j++)
-          local.set(LH[j], f64x2.relaxed_madd(qi, constF64x2(PF[j]), LH[j])); // lo
+          local.set(
+            LH[j],
+            f64x2.extract_lane(
+              0,
+              f64x2.relaxed_madd(qi, constF64x2(PF[j]), f64x2.splat(LH[j]))
+            )
+          ); // lo
 
-        local.set(Z[0], i64.add(Z[0], i64_extract_l(LH[0])));
-        local.set(Z[1], i64.add(Z[1], i64_extract_l(LH[1])));
+        local.set(Z[0], i64.add(Z[0], i64.reinterpret_f64(LH[0])));
+        local.set(Z[1], i64.add(Z[1], i64.reinterpret_f64(LH[1])));
         local.set(Z[0], i64.add(Z[1], i64.shr_s(Z[0], 51n)));
-        local.set(Z[1], i64.add(Z[2], i64_extract_l(LH[2])));
-        local.set(Z[2], i64.add(Z[3], i64_extract_l(LH[3])));
-        local.set(Z[3], i64.add(Z[4], i64_extract_l(LH[4])));
+        local.set(Z[1], i64.add(Z[2], i64.reinterpret_f64(LH[2])));
+        local.set(Z[2], i64.add(Z[3], i64.reinterpret_f64(LH[3])));
+        local.set(Z[3], i64.add(Z[4], i64.reinterpret_f64(LH[4])));
         local.set(Z[4], Z[5]);
         if (i < 4) local.set(Z[5], zInitial[6 + i]);
       }
@@ -419,6 +427,9 @@ function Multiply(
   );
 
   /**
+   * FAILED: this is a bit slower than `multiplySingleFma`
+   * (Also, doesn't pass test currently :/)
+   *
    * 51x5 multiplication of two _single_, packed field elements
    *
    * we use 64x2 operations on two elements of a 5- or 6-limb vector
@@ -466,19 +477,20 @@ function Multiply(
       // load y from memory into locals
       layout.forEach(([j, k], i) => {
         if (k === 5) {
-          v128.load64_zero({ offset: j * 8 }, y);
-          local.set(Y[i]);
+          local.set(Y[i], v128.load64_zero({ offset: j * 8 }, y));
           return;
         }
-        local.get(y);
-        local.get(Y[i]);
-        v128.load64_lane({ offset: j * 8 }, 0);
-        local.set(Y[i]);
-        local.get(y);
-        local.get(Y[i]);
-        v128.load64_lane({ offset: k * 8 }, 0);
-        local.set(Y[i]);
+        local.set(Y[i], v128.load64_lane({ offset: j * 8 }, 0, y, Y[i]));
+        local.set(Y[i], v128.load64_lane({ offset: k * 8 }, 0, y, Y[i]));
       });
+      if (convertInputs) {
+        f64x2.sub(i64x2.add(Y[0], constI64x2(c52n)), constF64x2(c52));
+        local.set(Y[0]);
+        f64x2.sub(i64x2.add(Y[1], constI64x2(c52n)), constF64x2(c52));
+        local.set(Y[1]);
+        f64x2.sub(i64x2.add(Y[2], constI64x2(c52n, 0n)), constF64x2(c52, 0));
+        local.set(Y[2]);
+      }
 
       // initialize Z with constants that offset float64 prefixes
       layout.forEach(([j, k], i) => {
@@ -487,7 +499,13 @@ function Multiply(
 
       for (let i = 0; i < 5; i++) {
         let xi = l128;
-        local.set(xi, v128.load64_splat({ offset: i * 8 }, x));
+        i64.load({ offset: i * 8 }, x);
+        if (convertInputs) {
+          i64.add($, c52n);
+          f64.reinterpret_i64();
+          f64.sub($, c52);
+        }
+        local.set(xi, f64x2.splat());
 
         // hi; note LH[5] = xi*0 + 0 = 0
         local.set(LH[0], f64x2.relaxed_madd(xi, Y[0], constF64x2(c103)));
@@ -509,12 +527,12 @@ function Multiply(
 
         // compute qi
         let qi = l128;
-        local.get(Z[0]);
-        i64.mul(i64x2.extract_lane(0), pInv);
+        i64.mul(i64x2.extract_lane(0, Z[0]), pInv);
         i64.and($, mask51);
-        i64.add($, c51n);
-        i64x2.splat();
-        f64x2.sub($, constF64x2(c51));
+        i64.add($, c52n);
+        f64.reinterpret_i64();
+        f64.sub($, c52);
+        f64x2.splat();
         local.set(qi);
 
         // hi; note LH[5] = qi*0 + 0 = 0
@@ -549,15 +567,13 @@ function Multiply(
 
         // Z[1,4] += [carry, 0]
         constI64x2(0n);
-        local.get(Z[0]);
-        i64x2.extract_lane(0);
+        i64x2.extract_lane(0, Z[0]);
         i64.shr_s($, 51n);
         i64x2.replace_lane(0);
         local.set(Z[1], i64x2.add($, Z[1]));
 
         constI64x2(zInitial[6 + i]);
-        local.get(Z[0]);
-        i64x2.extract_lane(1);
+        i64x2.extract_lane(1, Z[0]);
         i64x2.replace_lane(0);
         local.set(Z[0]); // Z[3, *]
 
@@ -606,108 +622,10 @@ function Multiply(
   let pInv26 = inverse(-p, 1n << 26n);
   let pInv25 = inverse(-p, 1n << 25n);
 
-  function computeQ(z: Input<i64>, pInv: bigint, mask: bigint) {
-    if (pInv === mask) {
-      // p = 1 mod 2^w  <==> -p^(-1) = -1 mod 2^w
-      // qi = z * (-1) % 2^w = (2^w - z) % 2^w
-      return i64.and(i64.sub(mask + 1n, i64.and(z, mask)), mask);
-    }
-    return i64.and(i64.mul(i64.and(z, mask), pInv), mask);
-  }
+  let multiplySingleNoFma = multiplySingle(p, "single");
 
-  let multiplySingle = (limbGap: number, limbOffset: number) =>
-    func(
-      {
-        in: [i32, i32, i32],
-        locals: [i64, i64, i64, i64, ...localsI64(10 + 9)],
-        out: [],
-      },
-      ([xy, x, y], [tmp, qi, xix2, xi, ...rest]) => {
-        let Y = rest.slice(0, 10);
-        let Z = rest.slice(10, 19);
-
-        // load y from memory into locals
-        for (let i = 0; i < 5; i++) {
-          local.set(xi, i64.load({ offset: i * limbGap + limbOffset }, y));
-          local.set(Y[2 * i], i64.and(xi, mask26));
-          local.set(Y[2 * i + 1], i64.shr_s(xi, 26n));
-        }
-
-        for (let i = 0; i < 5; i++) {
-          local.set(xix2, i64.load({ offset: i * limbGap + limbOffset }, x));
-
-          // LOWER HALF
-          local.set(xi, i64.and(xix2, mask26));
-
-          local.set(tmp, i64.add(i64.mul(xi, Y[0]), Z[0]));
-          local.set(qi, computeQ(tmp, pInv26, mask26));
-          local.get(tmp);
-          addMul(qi, P[0]);
-          i64.shr_s($, 26n);
-
-          for (let j = 1; j < 9; j++) {
-            i64.mul(xi, Y[j]);
-            if (j === 1) i64.add();
-            addMul(qi, P[j]);
-            local.get(Z[j]);
-            i64.add();
-            local.set(Z[j - 1]);
-          }
-          i64.mul(xi, Y[9]);
-          addMul(qi, P[9]);
-          local.set(Z[8]);
-
-          // UPPER HALF
-          local.set(xi, i64.shr_s(xix2, 26n));
-
-          local.set(tmp, i64.add(i64.mul(xi, Y[0]), Z[0]));
-          local.set(qi, computeQ(tmp, pInv25, mask25));
-          local.get(tmp);
-          addMul(qi, P[0]);
-          i64.shr_s($, 25n);
-          local.set(Z[1], i64.add($, Z[1]));
-
-          for (let j = 1; j < 9; j++) {
-            i64.mul(xi, Y[j]);
-            addMul(qi, P[j]);
-            if (j % 2 === 1) i64.shl($, 1n);
-            local.get(Z[j]);
-            i64.add();
-            local.set(Z[j - 1]);
-          }
-          i64.mul(xi, Y[9]);
-          addMul(qi, P[9]);
-          i64.shl($, 1n);
-          local.set(Z[8]);
-        }
-
-        // final pass of collecting carries, store output in memory
-        for (let i = 0; i < 4; i++) {
-          local.get(Z[2 * i]);
-          if (i > 0) i64.add(); // add carry
-          i64.and(Z[2 * i + 1], mask25);
-          i64.shl($, 26n);
-          local.set(tmp, i64.add());
-
-          // store 51 bits at a time
-          i64.and(tmp, mask51);
-          i64.store({ offset: i * limbGap + limbOffset }, xy, $);
-
-          // put carry on the stack
-          i64.shr_s(tmp, 51n);
-          i64.shr_s(Z[2 * i + 1], 25n);
-          i64.add();
-        }
-        // final iteration simpler because X[9] is not used
-        local.get(Z[8]);
-        i64.add(); // add carry
-        i64.store({ offset: 4 * limbGap + limbOffset }, xy, $);
-      }
-    );
-  let multiplySingleNoFma = multiplySingle(8, 0);
-
-  let multiplyNoFma0 = multiplySingle(16, 0);
-  let multiplyNoFma1 = multiplySingle(16, 8);
+  let multiplyNoFma0 = multiplySingle(p, ["lane", 0]);
+  let multiplyNoFma1 = multiplySingle(p, ["lane", 1]);
 
   let multiplyNoFma = func(
     {
@@ -735,6 +653,7 @@ function Multiply(
     );
   }
 
+  // slow, probably because there is no actual i64x2.mul supported by Intel
   let multiplyNoFmaSimd = func(
     {
       in: [i32, i32, i32],
@@ -922,11 +841,114 @@ function Multiply(
   return { multiply, multiplyNoFma, multiplySingle: multiplySingleNoFma };
 }
 
-function swap64x2(z: Local<v128>) {
-  return i8x16.swizzle(
-    z,
-    v128.const("i8x16", [8, 9, 10, 11, 12, 13, 14, 15, 0, 1, 2, 3, 4, 5, 6, 7])
+function multiplySingle(
+  p: bigint,
+  layout: FieldLayout
+): Func<["i32", "i32", "i32"], []> {
+  let { limbGap, limbOffset } = FieldLayout(layout);
+
+  let PI = bigintToInt51Limbs(p);
+  let P = [...PI].flatMap((pi) => [pi & mask26, pi >> 26n]);
+  let pInv26 = inverse(-p, 1n << 26n);
+  let pInv25 = inverse(-p, 1n << 25n);
+
+  return func(
+    {
+      in: [i32, i32, i32],
+      locals: [i64, i64, i64, i64, ...localsI64(10 + 9)],
+      out: [],
+    },
+    ([xy, x, y], [tmp, qi, xix2, xi, ...rest]) => {
+      let Y = rest.slice(0, 10);
+      let Z = rest.slice(10, 19);
+
+      // load y from memory into locals
+      for (let i = 0; i < 5; i++) {
+        local.set(xi, i64.load({ offset: i * limbGap + limbOffset }, y));
+        local.set(Y[2 * i], i64.and(xi, mask26));
+        local.set(Y[2 * i + 1], i64.shr_s(xi, 26n));
+      }
+
+      for (let i = 0; i < 5; i++) {
+        local.set(xix2, i64.load({ offset: i * limbGap + limbOffset }, x));
+
+        // LOWER HALF
+        local.set(xi, i64.and(xix2, mask26));
+
+        local.set(tmp, i64.add(i64.mul(xi, Y[0]), Z[0]));
+        local.set(qi, computeQ(tmp, pInv26, mask26));
+        local.get(tmp);
+        addMul(qi, P[0]);
+        i64.shr_s($, 26n);
+
+        for (let j = 1; j < 9; j++) {
+          i64.mul(xi, Y[j]);
+          if (j === 1) i64.add();
+          addMul(qi, P[j]);
+          local.get(Z[j]);
+          i64.add();
+          local.set(Z[j - 1]);
+        }
+        i64.mul(xi, Y[9]);
+        addMul(qi, P[9]);
+        local.set(Z[8]);
+
+        // UPPER HALF
+        local.set(xi, i64.shr_s(xix2, 26n));
+
+        local.set(tmp, i64.add(i64.mul(xi, Y[0]), Z[0]));
+        local.set(qi, computeQ(tmp, pInv25, mask25));
+        local.get(tmp);
+        addMul(qi, P[0]);
+        i64.shr_s($, 25n);
+        local.set(Z[1], i64.add($, Z[1]));
+
+        for (let j = 1; j < 9; j++) {
+          i64.mul(xi, Y[j]);
+          addMul(qi, P[j]);
+          if (j % 2 === 1) i64.shl($, 1n);
+          local.get(Z[j]);
+          i64.add();
+          local.set(Z[j - 1]);
+        }
+        i64.mul(xi, Y[9]);
+        addMul(qi, P[9]);
+        i64.shl($, 1n);
+        local.set(Z[8]);
+      }
+
+      // final pass of collecting carries, store output in memory
+      for (let i = 0; i < 4; i++) {
+        local.get(Z[2 * i]);
+        if (i > 0) i64.add(); // add carry
+        i64.and(Z[2 * i + 1], mask25);
+        i64.shl($, 26n);
+        local.set(tmp, i64.add());
+
+        // store 51 bits at a time
+        i64.and(tmp, mask51);
+        i64.store({ offset: i * limbGap + limbOffset }, xy, $);
+
+        // put carry on the stack
+        i64.shr_s(tmp, 51n);
+        i64.shr_s(Z[2 * i + 1], 25n);
+        i64.add();
+      }
+      // final iteration simpler because X[9] is not used
+      local.get(Z[8]);
+      i64.add(); // add carry
+      i64.store({ offset: 4 * limbGap + limbOffset }, xy, $);
+    }
   );
+}
+
+function computeQ(z: Input<i64>, pInv: bigint, mask: bigint) {
+  if (pInv === mask) {
+    // p = 1 mod 2^w  <==> -p^(-1) = -1 mod 2^w
+    // qi = z * (-1) % 2^w = (2^w - z) % 2^w
+    return i64.and(i64.sub(mask + 1n, i64.and(z, mask)), mask);
+  }
+  return i64.and(i64.mul(i64.and(z, mask), pInv), mask);
 }
 
 function addMul(l: Local<i64>, c: bigint) {
@@ -947,6 +969,18 @@ function addMulx2(l: Local<v128>, c: bigint) {
   }
   i64x2.mul(l, constI64x2(c));
   i64x2.add();
+}
+
+function swap64x2(z: Local<v128>) {
+  return i64x2.replace_lane(
+    0,
+    i64x2.splat(i64x2.extract_lane(0, z)),
+    i64x2.extract_lane(1, z)
+  );
+  // return i8x16.swizzle(
+  //   z,
+  //   v128.const("i8x16", [8, 9, 10, 11, 12, 13, 14, 15, 0, 1, 2, 3, 4, 5, 6, 7])
+  // );
 }
 
 // debugging helpers, currently unused

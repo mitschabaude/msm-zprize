@@ -38,8 +38,8 @@ async function benchmark(
   if (p < 1n << 255n) {
     let Fp = await createWasmWithBenches(p);
     let x = Fp.Memory.local.getPointer(Fp.size);
-    Fp.writePair(x, randomField(), randomField());
-    bench("multiply 51x5", Fp.Wasm.benchMultiply, { x, N }, 2);
+    let z = Fp.Memory.local.getPointer(Fp.size);
+
     Fp.writePair(x, randomField(), randomField());
     bench("multiply 51x5", Fp.Wasm.benchMultiply, { x, N }, 2);
 
@@ -48,9 +48,16 @@ async function benchmark(
 
     Fp.writePair(x, randomField(), randomField());
     bench("multiply 51x5 no fma", Fp.Wasm.benchMultiplyNoFma, { x, N }, 2);
+
+    Fp.writeSingle(x, randomField());
+    bench("add 51x5", Fp.Wasm.benchAddx3, { x, N }, 3);
+
+    Fp.writeSingle(x, randomField());
+    Fp.writeSingle(z, 0n);
+    bench("sub 51x5", Fp.Wasm.benchSubx3, { x, z, N }, 3);
   }
 
-  for (let w of [26, 29]) {
+  for (let w of [29]) {
     let { n } = montgomeryParams(p, w);
     let {
       benchMultiply: benchMontgomery,
@@ -287,8 +294,10 @@ async function benchmark(
 
 function bench(
   name: string,
-  compute: (x: number, N: number) => void,
-  { x, N }: { x: number; N: number },
+  compute:
+    | ((x: number, N: number) => void)
+    | ((x: number, z: number, N: number) => void),
+  { x, z, N }: { x: number; z?: number; N: number },
   /**
    * parameter to use if the operation is performed multiple times
    */
@@ -297,7 +306,8 @@ function bench(
   let Nscaled = Math.round(N / scale);
   name = name.padEnd(20, " ");
   tic();
-  compute(x, Nscaled);
+  if (z === undefined) (compute as (x: number, N: number) => void)(x, Nscaled);
+  else compute(x, z, Nscaled);
   let time = toc();
   console.log(`${name} \t ${(N / time / 1e3).toFixed(1).padStart(4)}M ops/s`);
   console.log(`${name} \t ${((time / N) * 1e6).toFixed(0)}ns`);
